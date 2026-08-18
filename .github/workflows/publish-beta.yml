@@ -1,0 +1,39 @@
+name: Publish beta userscript
+
+on:
+  push:
+    paths:
+      - 'dist-src/**'
+      - '.github/workflows/publish-beta.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rebuild and validate beta userscript
+        shell: bash
+        run: |
+          cat dist-src/beta.part.* > /tmp/beta.b64
+          base64 -d /tmp/beta.b64 | gzip -d > control-suite-boosteroid-beta.user.js
+          echo '655d6b9b933ce899df223459bac20d71f4fdcf760511a231090758dfcdf13e11  control-suite-boosteroid-beta.user.js' | sha256sum -c -
+          node --check control-suite-boosteroid-beta.user.js
+
+      - name: Publish fixed beta URL
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add control-suite-boosteroid-beta.user.js
+          if git diff --cached --quiet; then
+            echo 'No distribution change.'
+            exit 0
+          fi
+          git commit -m 'Publish beta userscript'
+          git push
