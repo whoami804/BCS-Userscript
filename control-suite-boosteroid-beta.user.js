@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc2
-// @description  Image Telemetry + Long Session Stability: bounded multi-hour observability; no new stream controls.
+// @version      0.8.1-rc3
+// @description  Image Telemetry + Long Session Crash-Safe: persistent multi-hour observability across reload/crash; no new stream controls.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc2';
-const BUILD = 'Image Telemetry + Long Session Stability - RC2';
+const VERSION = '0.8.1-rc3';
+const BUILD = 'Image Telemetry + Long Session Crash-Safe - RC3';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -31,6 +31,13 @@ const LONG_SESSION_CHECKPOINT_MS = 60 * 1000;
 const LONG_SESSION_MEMORY_MS = 5 * 60 * 1000;
 const LONG_SESSION_STORAGE_MS = 5 * 60 * 1000;
 const MAX_LONG_SESSION_CHECKPOINTS = 720; // 12h at 1 checkpoint/minute
+const LONG_SESSION_DB_NAME = 'bcs_long_session_v1';
+const LONG_SESSION_DB_VERSION = 1;
+const LONG_SESSION_SESSION_STORE = 'sessions';
+const LONG_SESSION_CHECKPOINT_STORE = 'checkpoints';
+const LONG_SESSION_ACTIVE_KEY = 'bcs.longSession.activeSessionId';
+const LONG_SESSION_RESUME_WINDOW_MS = 12 * 60 * 60 * 1000;
+const LONG_SESSION_MAX_PERSISTED_SESSIONS = 4;
 const FRAME_BIN_MS = 0.5;
 const FRAME_HIST_MAX_MS = 100;
 const FRAME_HIST_BINS = Math.ceil(FRAME_HIST_MAX_MS / FRAME_BIN_MS) + 1;
@@ -439,7 +446,28 @@ const S = {
     videoBindCount: 0,
     videoRemovedCount: 0,
     surfaceObserverBindCount: 0,
-    checkpointErrors: 0
+    checkpointErrors: 0,
+    persistence: {
+      supported: typeof indexedDB !== 'undefined',
+      eligible: IS_STREAM_DOCUMENT,
+      mode: 'UNINITIALIZED',
+      db: null,
+      ready: false,
+      initInFlight: null,
+      sessionId: null,
+      pageInstanceId: null,
+      startedAtMs: null,
+      resumed: false,
+      recoveredCheckpointCount: 0,
+      persistedCheckpointCount: 0,
+      nextSeq: 0,
+      lastPersistAtMs: null,
+      lastPersistReason: null,
+      writeErrors: 0,
+      readErrors: 0,
+      pruneErrors: 0,
+      lifecycleBound: false
+    }
   },
   lab: lsGet(K.lab, inferLab()),
   network: lsGet(K.network, 'OTHER'),
@@ -2576,6 +2604,362 @@ function correlateAnomalies(sample) {
 // Bounded, low-frequency observability for multi-hour sessions. This is not a
 // memory-leak detector by itself: every signal remains capability-aware.
 // -----------------------------------------------------------------------------
+function longSessionId(prefix='ls') {
+  try {
+    if (typeof globalThis.crypto?.randomUUID === 'function') return `${prefix}-${globalThis.crypto.randomUUID()}`;
+  } catch {}
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
+}
+
+function longSessionCheckpointKey(sessionId, seq) {
+  return `${sessionId}:${String(seq).padStart(8,'0')}`;
+}
+
+function idbRequest(req) {
+  return new Promise((resolve,reject)=>{
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error || new Error('IDB_REQUEST_FAILED'));
+  });
+}
+
+function idbTransactionDone(tx) {
+  return new Promise((resolve,reject)=>{
+    tx.oncomplete=()=>resolve(true);
+    tx.onerror=()=>reject(tx.error || new Error('IDB_TRANSACTION_FAILED'));
+    tx.onabort=()=>reject(tx.error || new Error('IDB_TRANSACTION_ABORTED'));
+  });
+}
+
+function openLongSessionDb() {
+  return new Promise((resolve,reject)=>{
+    if (typeof indexedDB === 'undefined') return reject(new Error('INDEXEDDB_UNAVAILABLE'));
+    const req=indexedDB.open(LONG_SESSION_DB_NAME,LONG_SESSION_DB_VERSION);
+    req.onupgradeneeded=()=>{
+      const db=req.result;
+      if (!db.objectStoreNames.contains(LONG_SESSION_SESSION_STORE)) {
+        db.createObjectStore(LONG_SESSION_SESSION_STORE,{keyPath:'id'});
+      }
+      if (!db.objectStoreNames.contains(LONG_SESSION_CHECKPOINT_STORE)) {
+        const store=db.createObjectStore(LONG_SESSION_CHECKPOINT_STORE,{keyPath:'key'});
+        store.createIndex('sessionId','sessionId',{unique:false});
+        store.createIndex('capturedAtMs','capturedAtMs',{unique:false});
+      } else {
+        const store=req.transaction.objectStore(LONG_SESSION_CHECKPOINT_STORE);
+        if (!store.indexNames.contains('sessionId')) store.createIndex('sessionId','sessionId',{unique:false});
+        if (!store.indexNames.contains('capturedAtMs')) store.createIndex('capturedAtMs','capturedAtMs',{unique:false});
+      }
+    };
+    req.onsuccess=()=>{
+      const db=req.result;
+      db.onversionchange=()=>{ try { db.close(); } catch {} };
+      resolve(db);
+    };
+    req.onerror=()=>reject(req.error || new Error('INDEXEDDB_OPEN_FAILED'));
+    req.onblocked=()=>reject(new Error('INDEXEDDB_OPEN_BLOCKED'));
+  });
+}
+
+async function idbGetSession(db,id) {
+  const tx=db.transaction(LONG_SESSION_SESSION_STORE,'readonly');
+  return idbRequest(tx.objectStore(LONG_SESSION_SESSION_STORE).get(id));
+}
+
+async function idbGetAllSessions(db) {
+  const tx=db.transaction(LONG_SESSION_SESSION_STORE,'readonly');
+  return idbRequest(tx.objectStore(LONG_SESSION_SESSION_STORE).getAll());
+}
+
+async function idbGetSessionCheckpoints(db,sessionId) {
+  const tx=db.transaction(LONG_SESSION_CHECKPOINT_STORE,'readonly');
+  const store=tx.objectStore(LONG_SESSION_CHECKPOINT_STORE);
+  const index=store.index('sessionId');
+  const rows=await idbRequest(index.getAll(IDBKeyRange.only(sessionId)));
+  return (rows||[]).sort((a,b)=>(a.seq||0)-(b.seq||0));
+}
+
+async function idbDeleteSession(db,sessionId) {
+  const tx=db.transaction([LONG_SESSION_SESSION_STORE,LONG_SESSION_CHECKPOINT_STORE],'readwrite');
+  tx.objectStore(LONG_SESSION_SESSION_STORE).delete(sessionId);
+  const store=tx.objectStore(LONG_SESSION_CHECKPOINT_STORE);
+  const index=store.index('sessionId');
+  await new Promise((resolve,reject)=>{
+    const req=index.openKeyCursor(IDBKeyRange.only(sessionId));
+    req.onsuccess=()=>{
+      const cursor=req.result;
+      if (!cursor) return resolve();
+      store.delete(cursor.primaryKey);
+      cursor.continue();
+    };
+    req.onerror=()=>reject(req.error || new Error('IDB_DELETE_CURSOR_FAILED'));
+  });
+  await idbTransactionDone(tx);
+}
+
+async function pruneLongSessionPersistence(db,currentSessionId) {
+  const p=S.longSession.persistence;
+  try {
+    const sessions=(await idbGetAllSessions(db) || [])
+      .filter(x=>x?.id && x.id!==currentSessionId)
+      .sort((a,b)=>(b.lastSeenAtMs||0)-(a.lastSeenAtMs||0));
+    const remove=sessions.slice(Math.max(0,LONG_SESSION_MAX_PERSISTED_SESSIONS-1));
+    for (const meta of remove) await idbDeleteSession(db,meta.id);
+  } catch (e) {
+    p.pruneErrors++;
+    addEvent('LONG_SESSION_PERSISTENCE_PRUNE_ERROR',{message:String(e?.message||e).slice(0,160)});
+  }
+}
+
+async function putLongSessionMeta(meta) {
+  const db=S.longSession.persistence.db;
+  if (!db) return false;
+  const tx=db.transaction(LONG_SESSION_SESSION_STORE,'readwrite');
+  tx.objectStore(LONG_SESSION_SESSION_STORE).put(meta);
+  await idbTransactionDone(tx);
+  return true;
+}
+
+async function createLongSessionPersistenceSession(reason='NEW_SESSION') {
+  const p=S.longSession.persistence;
+  const nowWall=Date.now();
+  const id=longSessionId('bcsls');
+  const pageInstanceId=longSessionId('page');
+  const meta={
+    id,
+    schemaVersion:1,
+    version:VERSION,
+    build:BUILD,
+    origin:location.origin,
+    startedAtMs:nowWall,
+    startedAt:new Date(nowWall).toISOString(),
+    lastSeenAtMs:nowWall,
+    lastSeenAt:new Date(nowWall).toISOString(),
+    lastCheckpointAtMs:null,
+    lastCheckpointAt:null,
+    nextSeq:0,
+    pageInstanceCount:1,
+    lastPageInstanceId:pageInstanceId,
+    lab:S.lab,
+    status:'ACTIVE',
+    createReason:reason
+  };
+  await putLongSessionMeta(meta);
+  lsSet(LONG_SESSION_ACTIVE_KEY,id);
+  p.sessionId=id;
+  p.pageInstanceId=pageInstanceId;
+  p.startedAtMs=nowWall;
+  p.nextSeq=0;
+  p.resumed=false;
+  p.recoveredCheckpointCount=0;
+  p.persistedCheckpointCount=0;
+  p.lastPersistAtMs=null;
+  p.lastPersistReason=null;
+  p.mode='INDEXEDDB_NEW';
+  return meta;
+}
+
+async function initLongSessionPersistence() {
+  const p=S.longSession.persistence;
+  if (p.ready) return true;
+  if (p.initInFlight) return p.initInFlight;
+  p.initInFlight=(async()=>{
+    if (!p.eligible) {
+      p.mode='NOT_STREAM_DOCUMENT';
+      p.ready=true;
+      return false;
+    }
+    if (!p.supported) {
+      p.mode='RAM_ONLY_INDEXEDDB_UNAVAILABLE';
+      p.ready=true;
+      addEvent('LONG_SESSION_PERSISTENCE_UNAVAILABLE',{reason:'INDEXEDDB_UNAVAILABLE'});
+      return false;
+    }
+    try {
+      const db=await openLongSessionDb();
+      p.db=db;
+      const activeId=lsGet(LONG_SESSION_ACTIVE_KEY,null);
+      let meta=activeId ? await idbGetSession(db,activeId) : null;
+      const nowWall=Date.now();
+      const resumable=!!meta &&
+        meta.version===VERSION &&
+        meta.origin===location.origin &&
+        Number.isFinite(meta.lastSeenAtMs) &&
+        nowWall-meta.lastSeenAtMs>=0 &&
+        nowWall-meta.lastSeenAtMs<=LONG_SESSION_RESUME_WINDOW_MS;
+
+      if (resumable) {
+        const rows=await idbGetSessionCheckpoints(db,meta.id);
+        const retained=rows.slice(-MAX_LONG_SESSION_CHECKPOINTS);
+        S.longSession.checkpoints.clear();
+        for (const row of retained) if (row?.checkpoint) S.longSession.checkpoints.push(row.checkpoint);
+        const pageInstanceId=longSessionId('page');
+        meta.lastSeenAtMs=nowWall;
+        meta.lastSeenAt=new Date(nowWall).toISOString();
+        meta.pageInstanceCount=(meta.pageInstanceCount||0)+1;
+        meta.lastPageInstanceId=pageInstanceId;
+        meta.status='ACTIVE';
+        await putLongSessionMeta(meta);
+        p.sessionId=meta.id;
+        p.pageInstanceId=pageInstanceId;
+        p.startedAtMs=meta.startedAtMs;
+        p.nextSeq=Math.max(Number(meta.nextSeq)||0,rows.length ? (rows[rows.length-1].seq||0)+1 : 0);
+        p.resumed=true;
+        p.recoveredCheckpointCount=retained.length;
+        p.persistedCheckpointCount=retained.length;
+        p.mode='INDEXEDDB_RESUMED';
+        addEvent('LONG_SESSION_PERSISTENCE_RECOVERED',{
+          sessionId:meta.id,
+          recoveredCheckpointCount:retained.length,
+          pageInstanceCount:meta.pageInstanceCount,
+          gapMs:nowWall-(meta.lastCheckpointAtMs||meta.lastSeenAtMs||nowWall)
+        });
+      } else {
+        if (meta?.id) {
+          try {
+            meta.status='STALE_NOT_RESUMED';
+            meta.lastSeenAtMs=nowWall;
+            meta.lastSeenAt=new Date(nowWall).toISOString();
+            await putLongSessionMeta(meta);
+          } catch {}
+        }
+        meta=await createLongSessionPersistenceSession(activeId ? 'ACTIVE_SESSION_NOT_RESUMABLE' : 'NO_ACTIVE_SESSION');
+        addEvent('LONG_SESSION_PERSISTENCE_STARTED',{sessionId:meta.id,mode:p.mode});
+      }
+      await pruneLongSessionPersistence(db,p.sessionId);
+      p.ready=true;
+      return true;
+    } catch (e) {
+      p.readErrors++;
+      p.mode='RAM_ONLY_INDEXEDDB_ERROR';
+      p.ready=true;
+      addEvent('LONG_SESSION_PERSISTENCE_ERROR',{stage:'INIT',message:String(e?.message||e).slice(0,180)});
+      return false;
+    } finally {
+      p.initInFlight=null;
+    }
+  })();
+  return p.initInFlight;
+}
+
+async function persistLongSessionCheckpoint(checkpoint,reason='TIMER') {
+  const p=S.longSession.persistence;
+  if (!p.ready) await initLongSessionPersistence();
+  if (!p.db || !p.sessionId || !checkpoint) return false;
+  const capturedAtMs=Number.isFinite(checkpoint.capturedAtMs) ? checkpoint.capturedAtMs : Date.now();
+  const seq=p.nextSeq++;
+  checkpoint.persistence={
+    schemaVersion:1,
+    sessionId:p.sessionId,
+    pageInstanceId:p.pageInstanceId,
+    seq,
+    capturedAtMs,
+    capturedAt:new Date(capturedAtMs).toISOString(),
+    logicalElapsedSec:Number.isFinite(p.startedAtMs) ? round((capturedAtMs-p.startedAtMs)/1000,3) : null,
+    pageElapsedSec:checkpoint.t,
+    resumedSession:p.resumed,
+    reason
+  };
+  const row={
+    key:longSessionCheckpointKey(p.sessionId,seq),
+    sessionId:p.sessionId,
+    seq,
+    capturedAtMs,
+    checkpoint
+  };
+  try {
+    const meta=await idbGetSession(p.db,p.sessionId);
+    const tx=p.db.transaction([LONG_SESSION_SESSION_STORE,LONG_SESSION_CHECKPOINT_STORE],'readwrite');
+    const cpStore=tx.objectStore(LONG_SESSION_CHECKPOINT_STORE);
+    const sessionStore=tx.objectStore(LONG_SESSION_SESSION_STORE);
+    cpStore.put(row);
+    const expiredSeq=seq-MAX_LONG_SESSION_CHECKPOINTS;
+    if (expiredSeq>=0) cpStore.delete(longSessionCheckpointKey(p.sessionId,expiredSeq));
+    const nextMeta={
+      ...(meta||{}),
+      id:p.sessionId,
+      schemaVersion:1,
+      version:VERSION,
+      build:BUILD,
+      origin:location.origin,
+      startedAtMs:p.startedAtMs,
+      startedAt:Number.isFinite(p.startedAtMs) ? new Date(p.startedAtMs).toISOString() : null,
+      lastSeenAtMs:capturedAtMs,
+      lastSeenAt:new Date(capturedAtMs).toISOString(),
+      lastCheckpointAtMs:capturedAtMs,
+      lastCheckpointAt:new Date(capturedAtMs).toISOString(),
+      nextSeq:p.nextSeq,
+      lastPageInstanceId:p.pageInstanceId,
+      pageInstanceCount:Math.max(1,meta?.pageInstanceCount||1),
+      lab:S.lab,
+      status:'ACTIVE'
+    };
+    sessionStore.put(nextMeta);
+    await idbTransactionDone(tx);
+    p.persistedCheckpointCount=Math.min(MAX_LONG_SESSION_CHECKPOINTS,p.persistedCheckpointCount+1);
+    p.lastPersistAtMs=capturedAtMs;
+    p.lastPersistReason=reason;
+    return true;
+  } catch (e) {
+    p.writeErrors++;
+    addEvent('LONG_SESSION_PERSISTENCE_ERROR',{stage:'WRITE',reason,message:String(e?.message||e).slice(0,180)});
+    return false;
+  }
+}
+
+function longSessionPersistenceSnapshot() {
+  const p=S.longSession.persistence;
+  return {
+    supported:p.supported,
+    eligible:p.eligible,
+    ready:p.ready,
+    mode:p.mode,
+    database:LONG_SESSION_DB_NAME,
+    schemaVersion:1,
+    sessionId:p.sessionId,
+    pageInstanceId:p.pageInstanceId,
+    startedAtMs:p.startedAtMs,
+    startedAt:Number.isFinite(p.startedAtMs) ? new Date(p.startedAtMs).toISOString() : null,
+    resumed:p.resumed,
+    recoveredCheckpointCount:p.recoveredCheckpointCount,
+    persistedCheckpointCount:p.persistedCheckpointCount,
+    nextSeq:p.nextSeq,
+    lastPersistAtMs:p.lastPersistAtMs,
+    lastPersistAt:Number.isFinite(p.lastPersistAtMs) ? new Date(p.lastPersistAtMs).toISOString() : null,
+    lastPersistReason:p.lastPersistReason,
+    resumeWindowMs:LONG_SESSION_RESUME_WINDOW_MS,
+    writeErrors:p.writeErrors,
+    readErrors:p.readErrors,
+    pruneErrors:p.pruneErrors,
+    originScoped:true,
+    note:'IndexedDB persistence is origin-scoped. A resumed session preserves prior page checkpoints when reload/crash returns to the same Boosteroid origin.'
+  };
+}
+
+async function rotateLongSessionPersistence(reason='MANUAL_RESET') {
+  const p=S.longSession.persistence;
+  if (!p.ready) await initLongSessionPersistence();
+  if (!p.db) return false;
+  try {
+    if (p.sessionId) {
+      const meta=await idbGetSession(p.db,p.sessionId);
+      if (meta) {
+        meta.status='CLOSED';
+        meta.closedAtMs=Date.now();
+        meta.closedAt=new Date(meta.closedAtMs).toISOString();
+        meta.closeReason=reason;
+        await putLongSessionMeta(meta);
+      }
+    }
+    lsRemove(LONG_SESSION_ACTIVE_KEY);
+    await createLongSessionPersistenceSession(reason);
+    await pruneLongSessionPersistence(p.db,p.sessionId);
+    return true;
+  } catch (e) {
+    p.writeErrors++;
+    addEvent('LONG_SESSION_PERSISTENCE_ERROR',{stage:'ROTATE',reason,message:String(e?.message||e).slice(0,180)});
+    return false;
+  }
+}
+
 function setupLongTaskObserver() {
   if (!CAP.experimental.longTask || S.longSession.longTaskObserver) return false;
   try {
@@ -2699,8 +3083,14 @@ function longSessionResourceSnapshot() {
 function buildLongSessionCheckpoint() {
   const s=S.latestSample;
   const lt=S.longSession.longTasks;
+  const capturedAtMs=Date.now();
   const checkpoint={
     t:round(elapsed(),3),
+    capturedAtMs,
+    capturedAt:new Date(capturedAtMs).toISOString(),
+    logicalElapsedSec:Number.isFinite(S.longSession.persistence.startedAtMs)
+      ? round((capturedAtMs-S.longSession.persistence.startedAtMs)/1000,3)
+      : null,
     streamActive:!!s?.streamActive,
     measurementEligible:s?.measurementEligible ?? null,
     phase:s?.phase ?? null,
@@ -2751,6 +3141,7 @@ async function collectLongSessionCheckpoint(reason='TIMER') {
     const checkpoint=buildLongSessionCheckpoint();
     checkpoint.reason=reason;
     S.longSession.checkpoints.push(checkpoint);
+    await persistLongSessionCheckpoint(checkpoint,reason);
   } catch (e) {
     S.longSession.checkpointErrors++;
     addEvent('LONG_SESSION_CHECKPOINT_ERROR',{message:String(e?.message||e).slice(0,160)});
@@ -2766,15 +3157,27 @@ function scheduleLongSessionCheckpoint(delay=LONG_SESSION_CHECKPOINT_MS) {
   },delay);
 }
 
-function startLongSessionMonitor() {
+function bindLongSessionLifecyclePersistence() {
+  const p=S.longSession.persistence;
+  if (p.lifecycleBound) return;
+  p.lifecycleBound=true;
+  window.addEventListener('pagehide',()=>{ void collectLongSessionCheckpoint('PAGEHIDE'); },{capture:true});
+  document.addEventListener('visibilitychange',()=>{
+    if (document.hidden) void collectLongSessionCheckpoint('DOCUMENT_HIDDEN');
+  },{passive:true});
+}
+
+async function startLongSessionMonitor() {
   if (S.longSession.running) return;
   S.longSession.running=true;
   setupLongTaskObserver();
   setupComputePressureObserver();
+  bindLongSessionLifecyclePersistence();
+  await initLongSessionPersistence();
   scheduleLongSessionCheckpoint(5000);
 }
 
-function resetLongSessionTelemetry() {
+async function resetLongSessionTelemetry(newPersistentSession=false) {
   S.longSession.checkpoints.clear();
   S.longSession.lastMemoryProbeAtMs=-Infinity;
   S.longSession.lastStorageProbeAtMs=-Infinity;
@@ -2786,6 +3189,7 @@ function resetLongSessionTelemetry() {
   S.longSession.videoBindCount=S.video ? 1 : 0;
   S.longSession.videoRemovedCount=0;
   S.longSession.surfaceObserverBindCount=S.surface.resizeObserver ? 1 : 0;
+  if (newPersistentSession) await rotateLongSessionPersistence('RECORDING_RESET');
 }
 
 // -----------------------------------------------------------------------------
@@ -3018,7 +3422,7 @@ async function startRecording() {
   S.samples.clear();
   S.events.clear();
   S.latestSample=null;
-  resetLongSessionTelemetry();
+  await resetLongSessionTelemetry(true);
   S.sessionStartPerf = now();
   S.sessionStartDate = new Date();
   S.recording = true;
@@ -3370,11 +3774,19 @@ function buildLongSessionStatistics() {
     if (state) pressureCounts[state]=(pressureCounts[state]||0)+1;
   }
   const first=cps[0]||null,last=cps[cps.length-1]||null;
+  const firstLogical=first?.logicalElapsedSec ?? first?.persistence?.logicalElapsedSec ?? null;
+  const lastLogical=last?.logicalElapsedSec ?? last?.persistence?.logicalElapsedSec ?? null;
+  const retainedHours=Number.isFinite(firstLogical) && Number.isFinite(lastLogical) && lastLogical>=firstLogical
+    ? (lastLogical-firstLogical)/3600
+    : cps.length*LONG_SESSION_CHECKPOINT_MS/3600000;
   return {
     checkpointCount:cps.length,
-    retainedHours:round(cps.length*LONG_SESSION_CHECKPOINT_MS/3600000,3),
+    retainedHours:round(retainedHours,3),
     firstAtSec:first?.t ?? null,
     lastAtSec:last?.t ?? null,
+    firstLogicalElapsedSec:firstLogical,
+    lastLogicalElapsedSec:lastLogical,
+    recoveredCheckpointCount:S.longSession.persistence.recoveredCheckpointCount,
     decodedFPS:stats(nums('decodedFPS')),
     rttMs:stats(nums('rttMs')),
     decodeTimePerFrameMs:stats(nums('decodeTimePerFrameMs')),
@@ -3384,7 +3796,9 @@ function buildLongSessionStatistics() {
     userAgentSpecificMemoryBytes:stats(uaMem),
     storageUsageBytes:stats(storageUsage),
     pressureStateCounts:pressureCounts,
-    checkpointErrors:S.longSession.checkpointErrors
+    checkpointErrors:S.longSession.checkpointErrors,
+    persistenceWriteErrors:S.longSession.persistence.writeErrors,
+    persistenceReadErrors:S.longSession.persistence.readErrors
   };
 }
 
@@ -3410,7 +3824,7 @@ function buildExport() {
       name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
       pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
       schemaVersion:2,
-      status:'V0.8.1_RC2__LONG_SESSION_TELEMETRY__NOT_CANONICAL'
+      status:'V0.8.1_RC3__LONG_SESSION_CRASH_SAFE__NOT_CANONICAL'
     },
     exportedAt:new Date().toISOString(),
     environment:ENV,
@@ -3491,12 +3905,14 @@ function buildExport() {
       statistics:imageStats
     },
     longSessionTelemetry:{
-      schemaVersion:1,
+      schemaVersion:2,
       observationalOnly:true,
+      crashSafePersistence:true,
       checkpointIntervalMs:LONG_SESSION_CHECKPOINT_MS,
       maxCheckpoints:MAX_LONG_SESSION_CHECKPOINTS,
-      maxRetentionHours:round(MAX_LONG_SESSION_CHECKPOINTS*LONG_SESSION_CHECKPOINT_MS/3600000,3),
-      rationale:'Preserve a bounded low-frequency history across multi-hour sessions while the 1 Hz CORE ring remains capped at ~1 hour.',
+      maxRetentionHoursAtPeriodicCadence:round(MAX_LONG_SESSION_CHECKPOINTS*LONG_SESSION_CHECKPOINT_MS/3600000,3),
+      retentionSemantics:'720 rows equals ~12 h at the periodic 1-minute cadence; extra lifecycle checkpoints can reduce wall-clock coverage if the page is repeatedly hidden/reloaded.',
+      rationale:'Preserve a bounded low-frequency history across multi-hour sessions and recover the timeline after same-origin reload/crash while the 1 Hz CORE ring remains capped at ~1 hour.',
       memorySemantics:{
         performanceMemory:'Chromium-specific JS heap signal when exposed; not total process/device RAM.',
         userAgentSpecificMemory:'used only when API exists and crossOriginIsolated is true; capability-aware.',
@@ -3504,6 +3920,8 @@ function buildExport() {
       },
       pressureSemantics:'Compute Pressure is a high-level CPU pressure state when exposed; it is not a direct temperature sensor.',
       longTaskSemantics:'Performance Long Tasks >=50 ms when supported; cumulative counters are checkpointed, not every entry.',
+      persistence:longSessionPersistenceSnapshot(),
+      recoverySemantics:'Checkpoint rows are asynchronously committed to origin-scoped IndexedDB. Periodic checkpoints are supplemented by pagehide/document-hidden snapshots; a hard crash can still lose at most the interval since the most recent successful write.',
       statistics:longSessionStats,
       checkpoints:longSessionCheckpoints
     },
@@ -3556,15 +3974,16 @@ function buildExport() {
       exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
       controlModel:'PERSISTENT_AUTO_APPLY',
       legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
-      longSessionTelemetry:'bounded 1-minute checkpoints; no extra RTC getStats calls'
+      longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls'
     },
     events
   };
 }
 
-function downloadJSON() {
+async function downloadJSON() {
   if (S.recording) stopRecording('EXPORT');
   addEvent('EXPORT');
+  await collectLongSessionCheckpoint('EXPORT');
 
   const analysisStart=now();
   const data=buildExport();
@@ -3865,7 +4284,7 @@ function boot() {
   }
   waitForBody();
   startSampler();
-  startLongSessionMonitor();
+  void startLongSessionMonitor();
   setTimeout(()=>refreshContext(true),1200);
   debug(`Control Suite v${VERSION} ready`);
 }
