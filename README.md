@@ -20,7 +20,7 @@ Depois da instalação, o próprio cabeçalho do userscript aponta `@updateURL` 
 ## Beta publicada atualmente
 
 - runtime: `v0.8.1-rc2 — Image Telemetry + Long Session Stability`;
-- status de engenharia: `STATIC PASS / LIVE LONG-SESSION PENDING / NOT CANONICAL`;
+- status de engenharia: `STATIC PASS / LIVE LONG-SESSION INCOMPLETO / NOT CANONICAL`;
 - SHA-256 do arquivo público de distribuição: `655d6b9b933ce899df223459bac20d71f4fdcf760511a231090758dfcdf13e11`;
 - o SHA difere da RC2 de engenharia porque o arquivo público adiciona somente metadados `@homepageURL`, `@updateURL` e `@downloadURL`; o runtime permanece o mesmo.
 
