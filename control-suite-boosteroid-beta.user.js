@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc3
-// @description  Image Telemetry + Long Session Crash-Safe: persistent multi-hour observability across reload/crash; no new stream controls.
+// @version      0.8.1-rc4
+// @description  Image Telemetry + Long Session Crash-Safe: persistent recovery with IndexedDB transaction integrity; no new stream controls.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc3';
-const BUILD = 'Image Telemetry + Long Session Crash-Safe - RC3';
+const VERSION = '0.8.1-rc4';
+const BUILD = 'Image Telemetry + Long Session Crash-Safe Integrity - RC4';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -2679,6 +2679,7 @@ async function idbGetSessionCheckpoints(db,sessionId) {
 
 async function idbDeleteSession(db,sessionId) {
   const tx=db.transaction([LONG_SESSION_SESSION_STORE,LONG_SESSION_CHECKPOINT_STORE],'readwrite');
+  const done=idbTransactionDone(tx);
   tx.objectStore(LONG_SESSION_SESSION_STORE).delete(sessionId);
   const store=tx.objectStore(LONG_SESSION_CHECKPOINT_STORE);
   const index=store.index('sessionId');
@@ -2692,7 +2693,7 @@ async function idbDeleteSession(db,sessionId) {
     };
     req.onerror=()=>reject(req.error || new Error('IDB_DELETE_CURSOR_FAILED'));
   });
-  await idbTransactionDone(tx);
+  await done;
 }
 
 async function pruneLongSessionPersistence(db,currentSessionId) {
@@ -2713,8 +2714,9 @@ async function putLongSessionMeta(meta) {
   const db=S.longSession.persistence.db;
   if (!db) return false;
   const tx=db.transaction(LONG_SESSION_SESSION_STORE,'readwrite');
+  const done=idbTransactionDone(tx);
   tx.objectStore(LONG_SESSION_SESSION_STORE).put(meta);
-  await idbTransactionDone(tx);
+  await done;
   return true;
 }
 
@@ -2866,13 +2868,9 @@ async function persistLongSessionCheckpoint(checkpoint,reason='TIMER') {
     checkpoint
   };
   try {
+    // Read metadata before opening the write transaction. Awaiting inside a live
+    // IndexedDB transaction can let the browser auto-commit it between tasks.
     const meta=await idbGetSession(p.db,p.sessionId);
-    const tx=p.db.transaction([LONG_SESSION_SESSION_STORE,LONG_SESSION_CHECKPOINT_STORE],'readwrite');
-    const cpStore=tx.objectStore(LONG_SESSION_CHECKPOINT_STORE);
-    const sessionStore=tx.objectStore(LONG_SESSION_SESSION_STORE);
-    cpStore.put(row);
-    const expiredSeq=seq-MAX_LONG_SESSION_CHECKPOINTS;
-    if (expiredSeq>=0) cpStore.delete(longSessionCheckpointKey(p.sessionId,expiredSeq));
     const nextMeta={
       ...(meta||{}),
       id:p.sessionId,
@@ -2892,8 +2890,15 @@ async function persistLongSessionCheckpoint(checkpoint,reason='TIMER') {
       lab:S.lab,
       status:'ACTIVE'
     };
+    const tx=p.db.transaction([LONG_SESSION_SESSION_STORE,LONG_SESSION_CHECKPOINT_STORE],'readwrite');
+    const done=idbTransactionDone(tx);
+    const cpStore=tx.objectStore(LONG_SESSION_CHECKPOINT_STORE);
+    const sessionStore=tx.objectStore(LONG_SESSION_SESSION_STORE);
+    cpStore.put(row);
+    const expiredSeq=seq-MAX_LONG_SESSION_CHECKPOINTS;
+    if (expiredSeq>=0) cpStore.delete(longSessionCheckpointKey(p.sessionId,expiredSeq));
     sessionStore.put(nextMeta);
-    await idbTransactionDone(tx);
+    await done;
     p.persistedCheckpointCount=Math.min(MAX_LONG_SESSION_CHECKPOINTS,p.persistedCheckpointCount+1);
     p.lastPersistAtMs=capturedAtMs;
     p.lastPersistReason=reason;
@@ -3824,7 +3829,7 @@ function buildExport() {
       name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
       pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
       schemaVersion:2,
-      status:'V0.8.1_RC3__LONG_SESSION_CRASH_SAFE__NOT_CANONICAL'
+      status:'V0.8.1_RC4__LONG_SESSION_CRASH_SAFE_INTEGRITY__NOT_CANONICAL'
     },
     exportedAt:new Date().toISOString(),
     environment:ENV,
