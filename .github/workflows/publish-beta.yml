@@ -20,11 +20,11 @@ jobs:
       - name: Patch and validate beta userscript
         shell: bash
         run: |
-          echo '655d6b9b933ce899df223459bac20d71f4fdcf760511a231090758dfcdf13e11  control-suite-boosteroid-beta.user.js' | sha256sum -c -
-          base64 -d dist-src/rc2-to-rc3.patch.gz.b64 | gzip -d > /tmp/rc2-to-rc3.patch
+          echo 'd4241c8ee48d88cb795072d0108c66e58980c0c7e378220fded9b8cbe912129d  control-suite-boosteroid-beta.user.js' | sha256sum -c -
+          base64 -d dist-src/rc3-to-rc4.patch.gz.b64 | gzip -d > /tmp/rc3-to-rc4.patch
           cp control-suite-boosteroid-beta.user.js /tmp/beta-next.user.js
-          patch --batch /tmp/beta-next.user.js < /tmp/rc2-to-rc3.patch
-          echo 'd4241c8ee48d88cb795072d0108c66e58980c0c7e378220fded9b8cbe912129d  /tmp/beta-next.user.js' | sha256sum -c -
+          patch --batch /tmp/beta-next.user.js < /tmp/rc3-to-rc4.patch
+          echo '2ee126e6ec94bb7a66ac08d525838b926c9ac57eeecce31c7def7f1e82861727  /tmp/beta-next.user.js' | sha256sum -c -
           node --check /tmp/beta-next.user.js
           mv /tmp/beta-next.user.js control-suite-boosteroid-beta.user.js
 
@@ -38,5 +38,5 @@ jobs:
             echo 'No distribution change.'
             exit 0
           fi
-          git commit -m 'Publish v0.8.1-rc3 beta userscript'
+          git commit -m 'Publish v0.8.1-rc4 beta userscript'
           git push
