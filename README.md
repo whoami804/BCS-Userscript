@@ -19,29 +19,33 @@ Depois da instalação, o próprio cabeçalho do userscript aponta `@updateURL` 
 
 ## Beta publicada atualmente
 
-- runtime: `v0.8.1-rc3 — Image Telemetry + Long Session Crash-Safe`;
+- runtime: `v0.8.1-rc4 — Image Telemetry + Long Session Crash-Safe Integrity`;
 - status de engenharia: `STATIC PASS / LIVE CRASH-RECOVERY PENDING / NOT CANONICAL`;
-- SHA-256 da build de engenharia: `bd7a38db42e42d0bc99b50d31caf40c106c9a7514150fb5f9240dca8f20065ea`;
-- SHA-256 esperado do arquivo público de distribuição: `d4241c8ee48d88cb795072d0108c66e58980c0c7e378220fded9b8cbe912129d`;
+- SHA-256 da build de engenharia: `13502346f7c8507dce3e1363557264b9f0cb646b60e9d5ec0611a499965c28d0`;
+- SHA-256 esperado do arquivo público de distribuição: `2ee126e6ec94bb7a66ac08d525838b926c9ac57eeecce31c7def7f1e82861727`;
 - o SHA público difere apenas porque o arquivo distribuído adiciona `@homepageURL`, `@updateURL` e `@downloadURL` ao cabeçalho.
 
-### O que muda na RC3
+### O que muda na RC4
 
-A RC3 mantém o CORE e o Stream Control existentes e adiciona persistência crash-safe ao **Long Session Telemetry**:
+A RC4 mantém o desenho crash-safe introduzido na RC3 e fecha um risco encontrado na revisão estática antes do LIVE: a vida útil de transações IndexedDB não deve depender de `await` entre leitura e novas escritas na mesma transação.
 
-- checkpoints continuam limitados e de baixa frequência;
-- cada checkpoint é persistido de forma assíncrona em IndexedDB quando disponível;
-- um `sessionId` lógico pode ser recuperado após reload/crash no mesmo origin Boosteroid;
-- `pagehide` e ocultação da página tentam registrar um checkpoint adicional;
-- o Export registra um checkpoint final antes de serializar o JSON;
-- a recuperação é origin-scoped e limitada; não duplica o ring CORE de 1 Hz;
-- nenhum novo `getStats()` foi adicionado.
+Ela mantém:
 
-**Limite importante:** um crash abrupto ainda pode perder o intervalo entre o último checkpoint persistido com sucesso e a falha. A RC3 reduz o risco de perder horas inteiras, mas não transforma persistência assíncrona em gravação síncrona por frame.
+- checkpoints limitados e de baixa frequência;
+- persistência assíncrona em IndexedDB quando disponível;
+- `sessionId` lógico recuperável após reload/crash no mesmo origin Boosteroid;
+- checkpoints adicionais em `pagehide`/ocultação e antes do Export;
+- recuperação origin-scoped e retenção limitada;
+- zero novo `getStats()`;
+- Stream Control fora do escopo da alteração.
+
+A RC4 move a leitura do metadata para antes da transação de escrita e registra o `transaction done` antes de emitir as operações, reduzindo risco de `TransactionInactiveError`/auto-commit durante persistência.
+
+**Limite importante:** um crash abrupto ainda pode perder o intervalo entre o último checkpoint persistido com sucesso e a falha. O objetivo é não perder horas inteiras, não gravar cada frame de forma síncrona.
 
 ## Como a publicação funciona
 
-A transição RC2 → RC3 é aplicada no GitHub Actions sobre a beta pública anterior. O workflow verifica o SHA da base, aplica o patch aprovado, verifica o SHA final e executa `node --check` antes de publicar a URL fixa.
+A transição RC3 → RC4 é aplicada no GitHub Actions sobre a beta pública anterior. O workflow verifica o SHA da base, aplica o patch aprovado, verifica o SHA final e executa `node --check` antes de publicar a URL fixa.
 
 ## Canal de desenvolvimento
 
