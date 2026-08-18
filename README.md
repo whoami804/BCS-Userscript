@@ -19,16 +19,29 @@ Depois da instalação, o próprio cabeçalho do userscript aponta `@updateURL` 
 
 ## Beta publicada atualmente
 
-- runtime: `v0.8.1-rc2 — Image Telemetry + Long Session Stability`;
-- status de engenharia: `STATIC PASS / LIVE LONG-SESSION INCOMPLETO / NOT CANONICAL`;
-- SHA-256 do arquivo público de distribuição: `655d6b9b933ce899df223459bac20d71f4fdcf760511a231090758dfcdf13e11`;
-- o SHA difere da RC2 de engenharia porque o arquivo público adiciona somente metadados `@homepageURL`, `@updateURL` e `@downloadURL`; o runtime permanece o mesmo.
+- runtime: `v0.8.1-rc3 — Image Telemetry + Long Session Crash-Safe`;
+- status de engenharia: `STATIC PASS / LIVE CRASH-RECOVERY PENDING / NOT CANONICAL`;
+- SHA-256 da build de engenharia: `bd7a38db42e42d0bc99b50d31caf40c106c9a7514150fb5f9240dca8f20065ea`;
+- SHA-256 esperado do arquivo público de distribuição: `d4241c8ee48d88cb795072d0108c66e58980c0c7e378220fded9b8cbe912129d`;
+- o SHA público difere apenas porque o arquivo distribuído adiciona `@homepageURL`, `@updateURL` e `@downloadURL` ao cabeçalho.
 
-**Importante:** a RC2 revelou que a telemetria multi-hora ainda não é crash-safe. Não iniciar outro teste longo destinado a preservar histórico até que a próxima candidata incorpore persistência/recovery.
+### O que muda na RC3
+
+A RC3 mantém o CORE e o Stream Control existentes e adiciona persistência crash-safe ao **Long Session Telemetry**:
+
+- checkpoints continuam limitados e de baixa frequência;
+- cada checkpoint é persistido de forma assíncrona em IndexedDB quando disponível;
+- um `sessionId` lógico pode ser recuperado após reload/crash no mesmo origin Boosteroid;
+- `pagehide` e ocultação da página tentam registrar um checkpoint adicional;
+- o Export registra um checkpoint final antes de serializar o JSON;
+- a recuperação é origin-scoped e limitada; não duplica o ring CORE de 1 Hz;
+- nenhum novo `getStats()` foi adicionado.
+
+**Limite importante:** um crash abrupto ainda pode perder o intervalo entre o último checkpoint persistido com sucesso e a falha. A RC3 reduz o risco de perder horas inteiras, mas não transforma persistência assíncrona em gravação síncrona por frame.
 
 ## Como a publicação funciona
 
-O payload aprovado é reconstruído pelo GitHub Actions. Antes de publicar a URL fixa, o workflow valida o SHA-256 esperado e executa `node --check`. Isso evita publicar silenciosamente um arquivo truncado ou diferente do artefato aprovado.
+A transição RC2 → RC3 é aplicada no GitHub Actions sobre a beta pública anterior. O workflow verifica o SHA da base, aplica o patch aprovado, verifica o SHA final e executa `node --check` antes de publicar a URL fixa.
 
 ## Canal de desenvolvimento
 
