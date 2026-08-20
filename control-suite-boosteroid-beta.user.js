@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc4
-// @description  Image Telemetry + Long Session Crash-Safe: persistent recovery with IndexedDB transaction integrity; no new stream controls.
+// @version      0.8.1-rc5
+// @description  Telemetry Integrity: deduplicated client state, protected anomaly evidence, resilient AV1 bitrate fallback; no new stream controls.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc4';
-const BUILD = 'Image Telemetry + Long Session Crash-Safe Integrity - RC4';
+const VERSION = '0.8.1-rc5';
+const BUILD = 'Image Telemetry + Long Session Telemetry Integrity - RC5';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -27,6 +27,7 @@ const RESOLUTION_PROOF_CONFIRM_SAMPLES = 3;
 const RESOLUTION_PROOF_TIMEOUT_SEC = 8;
 const MAX_SAMPLES = 3600;
 const MAX_EVENTS = 2400;
+const MAX_IMPORTANT_EVENTS = 640;
 const LONG_SESSION_CHECKPOINT_MS = 60 * 1000;
 const LONG_SESSION_MEMORY_MS = 5 * 60 * 1000;
 const LONG_SESSION_STORAGE_MS = 5 * 60 * 1000;
@@ -279,6 +280,16 @@ class Ring {
   }
 }
 
+const IMPORTANT_EVENT_TYPES = new Set([
+  'STREAM_ANOMALY','FREEZE_CHANGE','CODEC_CHANGE','INBOUND_RESOLUTION_CHANGE',
+  'PEER_CONNECTION_STATE','BITRATE_SOURCE_CHANGE','COMPOSITOR_REGIME_CHANGE',
+  'SURFACE_CHANGE','VIEWPORT_CHANGE','ORIENTATION_CHANGE','PHASE_CHANGE',
+  'RESOLUTION_PROOF_STATUS','EXPERIMENT_CONFOUND','MEASUREMENT_REANCHOR',
+  'VISIBILITY_CHANGE','SAMPLER_ERROR','BRIDGE_INSTALL_ERROR',
+  'LONG_SESSION_CHECKPOINT_ERROR','LONG_SESSION_PERSISTENCE_ERROR','LONG_SESSION_PERSISTENCE_PRUNE_ERROR',
+  'LONG_SESSION_PERSISTENCE_RECOVERED','LONG_SESSION_PERSISTENCE_UNAVAILABLE'
+]);
+
 function detectEnvironment() {
   const ua = navigator.userAgent || '';
   const reportedPlatform = navigator.platform || '';
@@ -429,6 +440,7 @@ const S = {
   sessionStartDate: new Date(),
   samples: new Ring(MAX_SAMPLES),
   events: new Ring(MAX_EVENTS),
+  importantEvents: new Ring(MAX_IMPORTANT_EVENTS),
   latestSample: null,
   longSession: {
     checkpoints: new Ring(MAX_LONG_SESSION_CHECKPOINTS),
@@ -570,10 +582,13 @@ const S = {
   rtcSource: null,
   contextLatest: null,
   contextFingerprint: '',
+  contextRawFingerprint: '',
+  contextTelemetry: { changes:0, suppressedFrameRateOnly:0, frameRateSamples:0, implausibleFrameRateSamples:0, lastObservedFrameRate:null },
   lastContextAt: 0,
   lastCodec: null,
   lastInboundResolution: null,
   lastPcState: null,
+  lastBitrateSource: null,
   lastAnomalySignature: '',
   lastAnomalyAt: -Infinity,
   control: {
@@ -639,11 +654,13 @@ function elapsed() {
 
 function addEvent(type, data = {}) {
   if (!S.recording && !['RECORDING_START', 'EXPORT'].includes(type)) return;
-  S.events.push({
+  const event={
     t: round(elapsed(), 3),
     type,
     ...data
-  });
+  };
+  S.events.push(event);
+  if (IMPORTANT_EVENT_TYPES.has(type)) S.importantEvents.push(event);
 }
 
 // -----------------------------------------------------------------------------
@@ -794,6 +811,9 @@ function installPageBridge() {
     const pc=peer.pc;
     const report=await pc.getStats();
     let inbound=null;
+    let videoInboundCount=0;
+    let videoBytesCounterCount=0;
+    let videoBytesReceivedTotal=0;
     const codecs=new Map();
     let selectedPair=null;
     let transport=null;
@@ -803,6 +823,11 @@ function installPageBridge() {
       if (r.type === 'transport') transport=r;
       if (r.type === 'candidate-pair' && r.state === 'succeeded' && (r.nominated || r.selected)) selectedPair=r;
       if (r.type === 'inbound-rtp' && (r.kind === 'video' || r.mediaType === 'video')) {
+        videoInboundCount++;
+        if (Number.isFinite(r.bytesReceived)) {
+          videoBytesReceivedTotal += r.bytesReceived;
+          videoBytesCounterCount++;
+        }
         if (!inbound || (r.bytesReceived || 0) > (inbound.bytesReceived || 0)) inbound=r;
       }
     });
@@ -819,6 +844,11 @@ function installPageBridge() {
       pcSource:peer.source,
       pcState:primitive(pc.connectionState),
       iceState:primitive(pc.iceConnectionState),
+      videoAggregate:{
+        inboundCount:videoInboundCount,
+        bytesCounterCount:videoBytesCounterCount,
+        bytesReceivedTotal:videoBytesCounterCount ? videoBytesReceivedTotal : null
+      },
       inbound:{
         timestamp:n(inbound.timestamp),
         id:inbound.id || null,
@@ -1843,7 +1873,9 @@ function processRtc(raw, localNow) {
   const cur = {
     localNow,
     timestamp: r.timestamp,
-    bytesReceived: r.bytesReceived ?? 0,
+    bytesReceived: r.bytesReceived ?? null,
+    videoBytesReceivedTotal: Number.isFinite(raw.videoAggregate?.bytesReceivedTotal) ? raw.videoAggregate.bytesReceivedTotal : null,
+    transportBytesReceived: Number.isFinite(raw.candidatePair?.bytesReceived) ? raw.candidatePair.bytesReceived : null,
     packetsReceived: r.packetsReceived ?? 0,
     packetsLost: r.packetsLost ?? 0,
     packetsDiscarded: r.packetsDiscarded ?? null,
@@ -1881,6 +1913,9 @@ function processRtc(raw, localNow) {
     inboundResolution: resObj(r.frameWidth, r.frameHeight),
     rtcFPS: r.framesPerSecond ?? null,
     bitrateMbps: null,
+    bitrateSource: null,
+    bitrateScope: null,
+    bitrateConfidence: null,
     receivedFPS: null,
     decodedFPS: null,
     packetsLostRaw: cur.packetsLost,
@@ -1938,20 +1973,49 @@ function processRtc(raw, localNow) {
     if (!(dt > 0 && dt < 10)) dt = (localNow - prev.localNow) / 1000;
 
     if (dt > 0) {
-      const bytesDelta = cur.bytesReceived - prev.bytesReceived;
-      if (bytesDelta >= 0) out.bitrateMbps = bytesDelta * 8 / dt / 1e6;
-
       const recvFramesDelta = cur.framesReceived - prev.framesReceived;
       const decFramesDelta = cur.framesDecoded - prev.framesDecoded;
-      if (recvFramesDelta >= 0) out.receivedFPS = recvFramesDelta / dt;
-      if (decFramesDelta >= 0) out.decodedFPS = decFramesDelta / dt;
-
       const recvPacketsDelta = cur.packetsReceived - prev.packetsReceived;
       const lostDelta = cur.packetsLost - prev.packetsLost;
+      if (recvFramesDelta >= 0) out.receivedFPS = recvFramesDelta / dt;
+      if (decFramesDelta >= 0) out.decodedFPS = decFramesDelta / dt;
       out.packetsReceivedDelta = recvPacketsDelta >= 0 ? recvPacketsDelta : null;
       out.packetsLostDelta = lostDelta >= 0 ? lostDelta : null;
       const packetTotal = Math.max(0, recvPacketsDelta) + Math.max(0, lostDelta);
       if (packetTotal > 0) out.packetLossPercent = Math.max(0, lostDelta) / packetTotal * 100;
+
+      const aggregateBytesDelta = Number.isFinite(cur.videoBytesReceivedTotal) && Number.isFinite(prev.videoBytesReceivedTotal)
+        ? cur.videoBytesReceivedTotal - prev.videoBytesReceivedTotal : null;
+      const selectedBytesDelta = Number.isFinite(cur.bytesReceived) && Number.isFinite(prev.bytesReceived)
+        ? cur.bytesReceived - prev.bytesReceived : null;
+      const transportBytesDelta = Number.isFinite(cur.transportBytesReceived) && Number.isFinite(prev.transportBytesReceived)
+        ? cur.transportBytesReceived - prev.transportBytesReceived : null;
+      const streamProgressed = recvFramesDelta > 0 || recvPacketsDelta > 0;
+      if (Number.isFinite(aggregateBytesDelta) && aggregateBytesDelta > 0) {
+        out.bitrateMbps = aggregateBytesDelta * 8 / dt / 1e6;
+        out.bitrateSource = 'INBOUND_VIDEO_BYTES_SUM';
+        out.bitrateScope = 'VIDEO';
+        out.bitrateConfidence = 'DIRECT_COUNTER';
+      } else if (Number.isFinite(selectedBytesDelta) && selectedBytesDelta > 0) {
+        out.bitrateMbps = selectedBytesDelta * 8 / dt / 1e6;
+        out.bitrateSource = 'SELECTED_INBOUND_VIDEO_BYTES';
+        out.bitrateScope = 'VIDEO';
+        out.bitrateConfidence = 'DIRECT_COUNTER';
+      } else if (streamProgressed && Number.isFinite(transportBytesDelta) && transportBytesDelta > 0) {
+        out.bitrateMbps = transportBytesDelta * 8 / dt / 1e6;
+        out.bitrateSource = 'CANDIDATE_PAIR_BYTES_FALLBACK';
+        out.bitrateScope = 'TRANSPORT';
+        out.bitrateConfidence = 'APPROXIMATE';
+      } else if (!streamProgressed && aggregateBytesDelta === 0) {
+        out.bitrateMbps = 0;
+        out.bitrateSource = 'INBOUND_VIDEO_BYTES_SUM';
+        out.bitrateScope = 'VIDEO';
+        out.bitrateConfidence = 'DIRECT_COUNTER';
+      } else if (streamProgressed) {
+        out.bitrateSource = 'UNAVAILABLE_STALLED_COUNTER';
+        out.bitrateScope = null;
+        out.bitrateConfidence = 'UNAVAILABLE';
+      }
 
       const droppedDelta = cur.framesDropped - prev.framesDropped;
       out.framesDroppedDelta = droppedDelta >= 0 ? droppedDelta : null;
@@ -2044,8 +2108,46 @@ function processRtc(raw, localNow) {
     S.lastPcState = out.pcState;
   }
   if ((out.freezeDelta || 0) > 0) addEvent('FREEZE_CHANGE', { delta: out.freezeDelta, total: out.freezeCount });
+  if (out.bitrateSource && out.bitrateSource !== S.lastBitrateSource) {
+    addEvent('BITRATE_SOURCE_CHANGE', { from:S.lastBitrateSource, to:out.bitrateSource, scope:out.bitrateScope, confidence:out.bitrateConfidence });
+    S.lastBitrateSource=out.bitrateSource;
+  }
 
   return out;
+}
+
+function stableReceiverTrackSettings(settings) {
+  if (!settings) return null;
+  return {
+    width:settings.width ?? null,
+    height:settings.height ?? null,
+    aspectRatio:settings.aspectRatio ?? null,
+    resizeMode:settings.resizeMode ?? null
+  };
+}
+
+function stableContextView(snapshot) {
+  return {
+    sh:snapshot?.sessionHandler || null,
+    pc:snapshot?.peerConnection || null,
+    st:snapshot?.storage || null,
+    receiverHints:snapshot?.receiverHints || null,
+    receiverTrackSettings:stableReceiverTrackSettings(snapshot?.receiverTrackSettings)
+  };
+}
+
+function clientStateEventView(snapshot) {
+  const stable=stableContextView(snapshot);
+  const observedFrameRate=snapshot?.receiverTrackSettings?.frameRate ?? null;
+  return {
+    sessionHandler:stable.sh,
+    peerConnection:stable.pc,
+    storage:stable.st,
+    receiverHints:stable.receiverHints,
+    receiverTrackSettings:stable.receiverTrackSettings,
+    receiverTrackFrameRateObserved:observedFrameRate,
+    receiverTrackFrameRateCadenceTrusted:false
+  };
 }
 
 async function refreshContext(force = false) {
@@ -2056,21 +2158,25 @@ async function refreshContext(force = false) {
   const r = await bridgeAsk('context', null, 600);
   if (!r?.ok || !r.snapshot) return now() - wallStart;
   S.contextLatest = r.snapshot;
-  const fingerprint = JSON.stringify({
-    sh: r.snapshot.sessionHandler,
-    pc: r.snapshot.peerConnection,
-    st: r.snapshot.storage,
-    receiverHints:r.snapshot.receiverHints,
-    receiverTrackSettings:r.snapshot.receiverTrackSettings
-  });
+
+  const observedFrameRate=Number(r.snapshot.receiverTrackSettings?.frameRate);
+  if (Number.isFinite(observedFrameRate)) {
+    S.contextTelemetry.frameRateSamples++;
+    S.contextTelemetry.lastObservedFrameRate=observedFrameRate;
+    if (observedFrameRate < 1 || observedFrameRate > 240) S.contextTelemetry.implausibleFrameRateSamples++;
+  }
+
+  const stableView=stableContextView(r.snapshot);
+  const fingerprint=JSON.stringify(stableView);
+  const rawFingerprint=JSON.stringify({stableView,frameRate:r.snapshot.receiverTrackSettings?.frameRate ?? null});
+  if (S.contextRawFingerprint && rawFingerprint !== S.contextRawFingerprint && fingerprint === S.contextFingerprint) {
+    S.contextTelemetry.suppressedFrameRateOnly++;
+  }
+  S.contextRawFingerprint=rawFingerprint;
+
   if (fingerprint !== S.contextFingerprint) {
-    addEvent('CLIENT_STATE_CHANGE', {
-      sessionHandler: r.snapshot.sessionHandler || null,
-      peerConnection: r.snapshot.peerConnection || null,
-      storage: r.snapshot.storage || null,
-      receiverHints:r.snapshot.receiverHints || null,
-      receiverTrackSettings:r.snapshot.receiverTrackSettings || null
-    });
+    addEvent('CLIENT_STATE_CHANGE', clientStateEventView(r.snapshot));
+    S.contextTelemetry.changes++;
     S.contextFingerprint = fingerprint;
   }
   return now() - wallStart;
@@ -2558,6 +2664,9 @@ function compactTelemetry(s) {
     callbackHz: s.callbackHz,
     framesPerCallback: s.framesPerCallback,
     bitrateMbps: s.bitrateMbps,
+    bitrateSource:s.bitrateSource,
+    bitrateScope:s.bitrateScope,
+    bitrateConfidence:s.bitrateConfidence,
     networkJitterMs: s.networkJitterMs,
     rttMs: s.rttMs,
     packetLossPercent: s.packetLossPercent,
@@ -3074,6 +3183,10 @@ function longSessionResourceSnapshot() {
     overwrittenSamples:Math.max(0,S.samples.total-S.samples.count),
     retainedEvents:S.events.count,
     overwrittenEvents:Math.max(0,S.events.total-S.events.count),
+    retainedImportantEvents:S.importantEvents.count,
+    overwrittenImportantEvents:Math.max(0,S.importantEvents.total-S.importantEvents.count),
+    clientStateChanges:S.contextTelemetry.changes,
+    suppressedFrameRateOnlyStateChanges:S.contextTelemetry.suppressedFrameRateOnly,
     experimentPhases:S.experimentManager.phases.length,
     videoBindCount:S.longSession.videoBindCount,
     videoRemovedCount:S.longSession.videoRemovedCount,
@@ -3105,6 +3218,9 @@ function buildLongSessionCheckpoint() {
     receivedFPS:s?.receivedFPS ?? null,
     decodedFPS:s?.decodedFPS ?? null,
     bitrateMbps:s?.bitrateMbps ?? null,
+    bitrateSource:s?.bitrateSource ?? null,
+    bitrateScope:s?.bitrateScope ?? null,
+    bitrateConfidence:s?.bitrateConfidence ?? null,
     rttMs:s?.rttMs ?? null,
     networkJitterMs:s?.networkJitterMs ?? null,
     packetLossPercent:s?.packetLossPercent ?? null,
@@ -3299,6 +3415,9 @@ async function sampleOnce() {
     receivedFPS: round(rtc?.receivedFPS, 3),
     decodedFPS: round(rtc?.decodedFPS, 3),
     bitrateMbps: round(rtc?.bitrateMbps, 3),
+    bitrateSource:rtc?.bitrateSource ?? null,
+    bitrateScope:rtc?.bitrateScope ?? null,
+    bitrateConfidence:rtc?.bitrateConfidence ?? null,
     networkJitterMs: round(rtc?.networkJitterMs, 3),
     rttMs: round(rtc?.rttMs, 3),
     availableIncomingMbps: round(rtc?.availableIncomingMbps, 3),
@@ -3426,6 +3545,11 @@ async function startRecording() {
   // v0.8: recording/Analyzer lifecycle must never disarm or rewrite Stream Control.
   S.samples.clear();
   S.events.clear();
+  S.importantEvents.clear();
+  S.contextFingerprint='';
+  S.contextRawFingerprint='';
+  S.contextTelemetry={changes:0,suppressedFrameRateOnly:0,frameRateSamples:0,implausibleFrameRateSamples:0,lastObservedFrameRate:null};
+  S.lastBitrateSource=null;
   S.latestSample=null;
   await resetLongSessionTelemetry(true);
   S.sessionStartPerf = now();
@@ -3651,6 +3775,7 @@ function coreSampleView(s) {
     playbackTotalVideoFramesDelta:s.playbackTotalVideoFramesDelta,playbackDroppedVideoFramesDelta:s.playbackDroppedVideoFramesDelta,playbackDropPercent:s.playbackDropPercent,
     pcSource:s.pcSource,pcState:s.pcState,codec:s.codec,inboundResolution:s.inboundResolution,inboundFramePx:s.inboundFramePx,receiverTrackSettings:s.receiverTrackSettings,
     rtcFPS:s.rtcFPS,receivedFPS:s.receivedFPS,decodedFPS:s.decodedFPS,bitrateMbps:s.bitrateMbps,
+    bitrateSource:s.bitrateSource,bitrateScope:s.bitrateScope,bitrateConfidence:s.bitrateConfidence,
     networkJitterMs:s.networkJitterMs,rttMs:s.rttMs,availableIncomingMbps:s.availableIncomingMbps,
     packetsReceivedDelta:s.packetsReceivedDelta,packetsLostDelta:s.packetsLostDelta,packetsLostRaw:s.packetsLostRaw,packetLossPercent:s.packetLossPercent,
     packetsDiscardedRaw:s.packetsDiscardedRaw,jitterBufferMs:s.jitterBufferMs,jitterBufferTargetMs:s.jitterBufferTargetMs,jitterBufferMinimumMs:s.jitterBufferMinimumMs,
@@ -3687,10 +3812,12 @@ function buildCoreStatistics(samples) {
   const eligible=samples.filter(s=>s.measurementEligible!==false);
   const active=eligible.filter(s=>s.streamActive||Number.isFinite(s.bitrateMbps));
   const col=key=>active.map(s=>s[key]).filter(Number.isFinite);
+  const bitrateSources={};
+  for (const s of active) if (s.bitrateSource) bitrateSources[s.bitrateSource]=(bitrateSources[s.bitrateSource]||0)+1;
   return {
     sampleCount:samples.length,eligibleSamples:eligible.length,activeSamples:active.length,approxActiveSeconds:active.length*SAMPLE_MS/1000,
     stream:{rtcFPS:stats(col('rtcFPS')),receivedFPS:stats(col('receivedFPS')),decodedFPS:stats(col('decodedFPS'))},
-    network:{bitrateMbps:stats(col('bitrateMbps')),jitterMs:stats(col('networkJitterMs')),rttMs:stats(col('rttMs')),packetLossPercent:stats(col('packetLossPercent'))},
+    network:{bitrateMbps:stats(col('bitrateMbps')),bitrateSources,jitterMs:stats(col('networkJitterMs')),rttMs:stats(col('rttMs')),packetLossPercent:stats(col('packetLossPercent'))},
     decoder:{decodeTimePerFrameMs:stats(col('decodeTimePerFrameMs')),framesDroppedDeltaTotal:active.reduce((a,x)=>a+(Number.isFinite(x.framesDroppedDelta)?x.framesDroppedDelta:0),0),freezeDeltaTotal:active.reduce((a,x)=>a+(Number.isFinite(x.freezeDelta)?x.freezeDelta:0),0)},
     suite:{cycleWallMs:stats(col('suiteCycleWallMs')),localWorkMs:stats(col('suiteLocalWorkMs')),bridgeStatsWallMs:stats(col('suiteBridgeStatsWallMs')),contextWallMs:stats(col('suiteContextWallMs')),uiCostMs:stats(col('suiteUiCostMs'))}
   };
@@ -3810,6 +3937,7 @@ function buildLongSessionStatistics() {
 function buildExport() {
   const samples=S.samples.toArray();
   const events=S.events.toArray();
+  const importantEvents=S.importantEvents.toArray();
   const control=controlSnapshot();
   const latest=samples.length ? samples[samples.length-1] : null;
   const experimentStatistics=buildExperimentStatistics(samples);
@@ -3829,7 +3957,7 @@ function buildExport() {
       name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
       pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
       schemaVersion:2,
-      status:'V0.8.1_RC4__LONG_SESSION_CRASH_SAFE_INTEGRITY__NOT_CANONICAL'
+      status:'V0.8.1_RC5__TELEMETRY_INTEGRITY__NOT_CANONICAL'
     },
     exportedAt:new Date().toISOString(),
     environment:ENV,
@@ -3868,6 +3996,7 @@ function buildExport() {
         rtcFPS:'RTCInboundRtpStreamStats.framesPerSecond',
         receivedFPS:'delta framesReceived / RTC stats time',
         decodedFPS:'delta framesDecoded / RTC stats time',
+        bitrateMbps:'direct sum of inbound-video bytes when valid; transport candidate-pair bytes only as explicitly labeled fallback when the Chromium/AV1 video counter stalls',
         requestedVsClientVsAchieved:'kept as separate fields; requested is never proof of achieved'
       },
       statistics:coreStats,
@@ -3902,6 +4031,7 @@ function buildExport() {
         explicitFields:['inboundFramePx','intrinsicVideoCssPx','elementBoxCssPx','rvfcMediaFramePx','objectFit','objectPosition']
       },
       semantics:{
+        receiverTrackSettingsFrameRate:'observational only; excluded from cadence and CLIENT_STATE_CHANGE fingerprint because Chromium/Android can report implausible values',
         qpPerDecodedFrame:'delta qpSum / delta framesDecoded; codec/context-relative trend only',
         renderedFPSFromStats:'delta RTCInboundRtpStreamStats.framesRendered / stats time when exposed',
         playbackDropPercent:'delta droppedVideoFrames / delta totalVideoFrames; corroborating signal pending live WebRTC validation',
@@ -3971,16 +4101,28 @@ function buildExport() {
         firstFrameAtSec:S.firstFrameAt,lastFrameAtSec:S.lastFrameAt
       },
       phases:experimentStatistics,
-      correlations:buildCorrelations(samples,events)
+      correlations:buildCorrelations(samples,importantEvents.length ? importantEvents : events)
     },
     instrumentation:{
       rtcNativeHooks:[],
       pageMethodOverrides:S.control.state==='ACTIVE' && (S.control.application?.patch?.patched||S.control.application?.patched) ? ['StreamDeviceContext.getSafeResolution','SessionHandler.getWindowResolution'] : [],
       exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
       controlModel:'PERSISTENT_AUTO_APPLY',
+      telemetryIntegrityModel:'RC5_DEDUP_PROTECTED_EVENTS_AV1_BITRATE_FALLBACK',
       legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
-      longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls'
+      longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls',
+      telemetryIntegrity:{
+        clientStateFingerprintExcludesReceiverTrackFrameRate:true,
+        clientStateChanges:S.contextTelemetry.changes,
+        suppressedFrameRateOnlyStateChanges:S.contextTelemetry.suppressedFrameRateOnly,
+        receiverTrackFrameRateSamples:S.contextTelemetry.frameRateSamples,
+        implausibleReceiverTrackFrameRateSamples:S.contextTelemetry.implausibleFrameRateSamples,
+        lastObservedReceiverTrackFrameRate:S.contextTelemetry.lastObservedFrameRate,
+        protectedImportantEventLedger:true,
+        maxImportantEvents:MAX_IMPORTANT_EVENTS
+      }
     },
+    importantEvents:S.importantEvents.toArray(),
     events
   };
 }
