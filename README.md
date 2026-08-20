@@ -10,48 +10,45 @@ Canal público de distribuição do **Boosteroid Control Suite (BCS)** para inst
 
 Abra essa URL no navegador em que o Tampermonkey está instalado e confirme **Instalar**.
 
-Depois da instalação, o próprio cabeçalho do userscript aponta `@updateURL` e `@downloadURL` para essa URL fixa. Quando uma nova beta for aprovada para teste, o arquivo é substituído mantendo o mesmo endereço e com `@version` incrementado.
+Depois da instalação, o próprio cabeçalho do userscript aponta `@updateURL` e `@downloadURL` para essa URL fixa. Quando uma nova beta é aprovada, o arquivo é substituído mantendo o mesmo endereço e com `@version` incrementado.
 
 ## Canais
 
 - **Beta:** `control-suite-boosteroid-beta.user.js` — candidatas de laboratório aprovadas para teste.
-- **Stable:** ainda não publicado. Será criado somente quando houver uma build explicitamente promovida para distribuição estável.
+- **Stable:** ainda não publicado. Será criado somente após promoção explícita adequada.
 
 ## Beta publicada atualmente
 
-- runtime: `v0.8.1-rc4 — Image Telemetry + Long Session Crash-Safe Integrity`;
-- status de engenharia: `STATIC PASS / LIVE CRASH-RECOVERY PENDING / NOT CANONICAL`;
-- SHA-256 da build de engenharia: `13502346f7c8507dce3e1363557264b9f0cb646b60e9d5ec0611a499965c28d0`;
-- SHA-256 esperado do arquivo público de distribuição: `2ee126e6ec94bb7a66ac08d525838b926c9ac57eeecce31c7def7f1e82861727`;
-- o SHA público difere apenas porque o arquivo distribuído adiciona `@homepageURL`, `@updateURL` e `@downloadURL` ao cabeçalho.
+- runtime: `v0.8.1-rc5 — Image Telemetry + Long Session Telemetry Integrity`;
+- status de engenharia: `STATIC PASS / LIVE SMOKE PENDING / NOT CANONICAL`;
+- SHA-256 da build de engenharia: `ea8b9a54df46f9c1535ca842371098c5c92931c5e90dbf65e9ac388ea8a80e80`;
+- SHA-256 do arquivo público de distribuição: `bf67829de2b96789a4d19648fca8d152f92d685dff4198c8435f22326e4cf903`;
+- Git blob público: `ab05710a8fbfdae7366576e5a37552748d56119d`;
+- o SHA público difere da build de engenharia apenas pelos metadados públicos `@homepageURL`, `@updateURL` e `@downloadURL`.
 
-### O que muda na RC4
+### O que muda na RC5
 
-A RC4 mantém o desenho crash-safe introduzido na RC3 e fecha um risco encontrado na revisão estática antes do LIVE: a vida útil de transações IndexedDB não deve depender de `await` entre leitura e novas escritas na mesma transação.
+A RC5 é uma correção de **integridade de telemetria**. Ela não adiciona novos controles de stream.
 
-Ela mantém:
+Principais mudanças:
 
-- checkpoints limitados e de baixa frequência;
-- persistência assíncrona em IndexedDB quando disponível;
-- `sessionId` lógico recuperável após reload/crash no mesmo origin Boosteroid;
-- checkpoints adicionais em `pagehide`/ocultação e antes do Export;
-- recuperação origin-scoped e retenção limitada;
-- zero novo `getStats()`;
-- Stream Control fora do escopo da alteração.
+- `receiverTrackSettings.frameRate` continua observável, mas deixa de participar do fingerprint de `CLIENT_STATE_CHANGE`, porque o Chromium/Android pode expor valores implausíveis e altamente instáveis;
+- mudanças de estado redundantes passam a ser suprimidas e contabilizadas;
+- eventos importantes ganham um ledger protegido e limitado, reduzindo o risco de anomalias serem expulsas por eventos de baixa prioridade;
+- bitrate passa a somar `bytesReceived` dos relatórios `inbound-rtp` de vídeo do mesmo `getStats()`;
+- quando o contador de vídeo estaciona apesar do stream continuar progredindo, existe fallback para `candidate-pair.bytesReceived`, explicitamente marcado como escopo de transporte e evidência aproximada;
+- quando não há contador válido, a telemetria prefere indisponível a reportar falso `0 Mbps` durante stream ativo;
+- mantém um único `getStats()` por sample, zero hook global de `RTCPeerConnection` e Stream Control fora do escopo da alteração.
 
-A RC4 move a leitura do metadata para antes da transação de escrita e registra o `transaction done` antes de emitir as operações, reduzindo risco de `TransactionInactiveError`/auto-commit durante persistência.
-
-**Limite importante:** um crash abrupto ainda pode perder o intervalo entre o último checkpoint persistido com sucesso e a falha. O objetivo é não perder horas inteiras, não gravar cada frame de forma síncrona.
+A persistência crash-safe da RC4 permanece presente e já passou por validação LIVE de recovery. O próximo gate da RC5 é apenas um smoke curto durante uso normal.
 
 ## Como a publicação funciona
 
-A transição RC3 → RC4 é aplicada no GitHub Actions sobre a beta pública anterior. O workflow verifica o SHA da base, aplica o patch aprovado, verifica o SHA final e executa `node --check` antes de publicar a URL fixa.
+A transição RC4 → RC5 é aplicada pelo GitHub Actions sobre a beta pública anterior. O workflow verifica o SHA da base, aplica o patch aprovado, verifica o SHA final e executa `node --check` antes de publicar a URL fixa.
 
 ## Canal de desenvolvimento
 
 O desenvolvimento completo, documentação de engenharia, Evidence Database e logs de laboratório permanecem no repositório privado e **não são publicados aqui**.
-
-Este repositório contém somente artefatos explicitamente aprovados para distribuição/teste.
 
 ## Privacidade
 
