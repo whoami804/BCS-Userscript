@@ -1,12 +1,15 @@
 name: Publish beta userscript
 
-# RC6 publication trigger via merge; workflow body remains deterministic.
-# RC6 retrigger 2026-08-23T14:58-03:00
 on:
   push:
     paths:
       - 'patches/rc5-to-rc6.patch.gz.b64'
       - '.github/workflows/publish-beta.yml'
+  pull_request:
+    paths:
+      - 'patches/rc5-to-rc6.patch.gz.b64'
+      - '.github/workflows/publish-beta.yml'
+      - 'triggers/rc6-direct-publish.txt'
 
 permissions:
   contents: write
@@ -16,8 +19,10 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout branch
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Patch and validate beta userscript
         shell: bash
@@ -30,7 +35,7 @@ jobs:
           node --check /tmp/beta-next.user.js
           mv /tmp/beta-next.user.js control-suite-boosteroid-beta.user.js
 
-      - name: Publish fixed beta URL
+      - name: Commit RC6 onto current branch
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
@@ -41,4 +46,4 @@ jobs:
             exit 0
           fi
           git commit -m 'Publish v0.8.1-rc6 beta userscript'
-          git push
+          git push origin HEAD:${{ github.head_ref || github.ref_name }}
