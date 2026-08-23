@@ -3,13 +3,12 @@ name: Publish beta userscript
 on:
   push:
     paths:
-      - 'patches/rc5-to-rc6.patch.gz.b64'
+      - 'patches/rc5-to-rc6.parts/**'
       - '.github/workflows/publish-beta.yml'
   pull_request:
     paths:
-      - 'patches/rc5-to-rc6.patch.gz.b64'
+      - 'patches/rc5-to-rc6.parts/**'
       - '.github/workflows/publish-beta.yml'
-      - 'triggers/rc6-direct-publish.txt'
 
 permissions:
   contents: write
@@ -28,14 +27,14 @@ jobs:
         shell: bash
         run: |
           echo 'bf67829de2b96789a4d19648fca8d152f92d685dff4198c8435f22326e4cf903  control-suite-boosteroid-beta.user.js' | sha256sum -c -
-          base64 -d patches/rc5-to-rc6.patch.gz.b64 | gzip -d > /tmp/rc5-to-rc6.patch
+          cat patches/rc5-to-rc6.parts/* | base64 -d | gzip -d > /tmp/rc5-to-rc6.patch
           cp control-suite-boosteroid-beta.user.js /tmp/beta-next.user.js
           patch --batch /tmp/beta-next.user.js < /tmp/rc5-to-rc6.patch
           echo '347452b473adf799c38c136a42eb8306bfcb9f5276a4e93eb727b2d2bb42b605  /tmp/beta-next.user.js' | sha256sum -c -
           node --check /tmp/beta-next.user.js
           mv /tmp/beta-next.user.js control-suite-boosteroid-beta.user.js
 
-      - name: Commit RC6 onto current branch
+      - name: Publish fixed beta URL
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
