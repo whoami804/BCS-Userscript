@@ -1,6 +1,7 @@
 name: Publish beta userscript
 
 # RC6 publication trigger via merge; workflow body remains deterministic.
+# RC6 retrigger 2026-08-23T14:58-03:00
 on:
   push:
     paths:
