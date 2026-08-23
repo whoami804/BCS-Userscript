@@ -1,5 +1,6 @@
 name: Publish beta userscript
 
+# RC6 publication trigger via merge; workflow body remains deterministic.
 on:
   push:
     paths:
