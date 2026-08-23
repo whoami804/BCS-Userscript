@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc5
-// @description  Telemetry Integrity: deduplicated client state, protected anomaly evidence, resilient AV1 bitrate fallback; no new stream controls.
+// @version      0.8.1-rc6
+// @description  Input Compatibility Probe: on-demand keyboard/mouse/fullscreen evidence plus reversible Keyboard Lock test; no mouse/keyboard transport override.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc5';
-const BUILD = 'Image Telemetry + Long Session Telemetry Integrity - RC5';
+const VERSION = '0.8.1-rc6';
+const BUILD = 'Input Compatibility Probe + Telemetry Integrity - RC6';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -28,6 +28,8 @@ const RESOLUTION_PROOF_TIMEOUT_SEC = 8;
 const MAX_SAMPLES = 3600;
 const MAX_EVENTS = 2400;
 const MAX_IMPORTANT_EVENTS = 640;
+const MAX_INPUT_PROBE_EVENTS = 512;
+const INPUT_PROBE_AUTO_STOP_MS = 2 * 60 * 1000;
 const LONG_SESSION_CHECKPOINT_MS = 60 * 1000;
 const LONG_SESSION_MEMORY_MS = 5 * 60 * 1000;
 const LONG_SESSION_STORAGE_MS = 5 * 60 * 1000;
@@ -287,7 +289,8 @@ const IMPORTANT_EVENT_TYPES = new Set([
   'RESOLUTION_PROOF_STATUS','EXPERIMENT_CONFOUND','MEASUREMENT_REANCHOR',
   'VISIBILITY_CHANGE','SAMPLER_ERROR','BRIDGE_INSTALL_ERROR',
   'LONG_SESSION_CHECKPOINT_ERROR','LONG_SESSION_PERSISTENCE_ERROR','LONG_SESSION_PERSISTENCE_PRUNE_ERROR',
-  'LONG_SESSION_PERSISTENCE_RECOVERED','LONG_SESSION_PERSISTENCE_UNAVAILABLE'
+  'LONG_SESSION_PERSISTENCE_RECOVERED','LONG_SESSION_PERSISTENCE_UNAVAILABLE',
+  'INPUT_PROBE_START','INPUT_PROBE_STOP','INPUT_KEYBOARD_LOCK_CHANGE','INPUT_KEYBOARD_LOCK_ERROR'
 ]);
 
 function detectEnvironment() {
@@ -397,6 +400,9 @@ function capabilitySnapshot() {
       gamepad: typeof navigator.getGamepads === 'function',
       vibration: typeof navigator.vibrate === 'function',
       pointer: typeof PointerEvent !== 'undefined',
+      pointerLock: 'pointerLockElement' in document,
+      keyboard: true,
+      keyboardLock: !!navigator.keyboard && typeof navigator.keyboard.lock === 'function' && typeof navigator.keyboard.unlock === 'function',
       touch: navigator.maxTouchPoints > 0 || 'ontouchstart' in window
     },
     display: {
@@ -441,6 +447,32 @@ const S = {
   samples: new Ring(MAX_SAMPLES),
   events: new Ring(MAX_EVENTS),
   importantEvents: new Ring(MAX_IMPORTANT_EVENTS),
+  inputProbe: {
+    enabled: false,
+    bound: false,
+    startedAtSec: null,
+    stoppedAtSec: null,
+    events: new Ring(MAX_INPUT_PROBE_EVENTS),
+    lastEvent: null,
+    handlers: null,
+    autoStopTimer: null,
+    keyDownCodes: Object.create(null),
+    counters: {
+      keydown:0,keyup:0,pointerdown:0,pointerup:0,mousedown:0,mouseup:0,contextmenu:0,
+      mouseDownWhileOtherHeld:0,multiButtonStateEvents:0,fullscreenchange:0,pointerlockchange:0,
+      visibilitychange:0,windowBlur:0,windowFocus:0
+    },
+    keyboardLock: {
+      supported: !!navigator.keyboard && typeof navigator.keyboard.lock === 'function' && typeof navigator.keyboard.unlock === 'function',
+      active: false,
+      requestedCodes: [],
+      requestCount: 0,
+      successCount: 0,
+      failureCount: 0,
+      lastError: null,
+      lastChangeAtSec: null
+    }
+  },
   latestSample: null,
   longSession: {
     checkpoints: new Ring(MAX_LONG_SESSION_CHECKPOINTS),
@@ -661,6 +693,362 @@ function addEvent(type, data = {}) {
   };
   S.events.push(event);
   if (IMPORTANT_EVENT_TYPES.has(type)) S.importantEvents.push(event);
+}
+
+
+// -----------------------------------------------------------------------------
+// INPUT COMPATIBILITY PROBE - ON DEMAND, OBSERVATIONAL BY DEFAULT
+// Captures DOM evidence for reserved keyboard keys, fullscreen/focus transitions
+// and simultaneous mouse-button behavior. It does not synthesize remote input.
+// Keyboard Lock is a separate reversible user-triggered experiment.
+// -----------------------------------------------------------------------------
+function fullscreenElementCompat() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function inputProbeTargetView(target) {
+  if (!target || typeof target !== 'object') return null;
+  let tag=null, isBcsUi=false;
+  try {
+    tag=target.tagName || target.nodeName || null;
+    isBcsUi=!!target.closest?.('#bcs-panel,#bcs-open');
+  } catch {}
+  return { tag, isBcsUi };
+}
+
+function pushInputProbeEvent(type, data = {}, force = false) {
+  const P=S.inputProbe;
+  if (!force && !P.enabled) return null;
+  const event={
+    t:round(elapsed(),3),
+    wallAt:new Date().toISOString(),
+    type,
+    fullscreen:!!fullscreenElementCompat(),
+    pointerLocked:!!document.pointerLockElement,
+    visibilityState:document.visibilityState || null,
+    documentHasFocus:typeof document.hasFocus === 'function' ? document.hasFocus() : null,
+    ...data
+  };
+  P.events.push(event);
+  P.lastEvent=event;
+  return event;
+}
+
+function inputKeyboardEventView(e) {
+  return {
+    code:e.code || null,
+    key:e.key && e.key.length > 1 ? e.key : null,
+    repeat:!!e.repeat,
+    location:Number.isFinite(e.location) ? e.location : null,
+    altKey:!!e.altKey,
+    ctrlKey:!!e.ctrlKey,
+    shiftKey:!!e.shiftKey,
+    metaKey:!!e.metaKey,
+    isTrusted:e.isTrusted === true,
+    defaultPreventedAtCapture:!!e.defaultPrevented,
+    defaultPreventedAfterDispatch:null,
+    target:inputProbeTargetView(e.target)
+  };
+}
+
+function inputPointerEventView(e) {
+  const buttons=Number.isFinite(e.buttons) ? e.buttons : null;
+  return {
+    button:Number.isFinite(e.button) ? e.button : null,
+    buttons,
+    multiButtonState:Number.isFinite(buttons) ? (buttons !== 0 && (buttons & (buttons - 1)) !== 0) : null,
+    pointerType:e.pointerType || null,
+    pointerId:Number.isFinite(e.pointerId) ? e.pointerId : null,
+    isPrimary:typeof e.isPrimary === 'boolean' ? e.isPrimary : null,
+    isTrusted:e.isTrusted === true,
+    defaultPreventedAtCapture:!!e.defaultPrevented,
+    defaultPreventedAfterDispatch:null,
+    target:inputProbeTargetView(e.target)
+  };
+}
+
+function noteDefaultPreventedAfterDispatch(record, e) {
+  if (!record) return;
+  const apply=() => { try { record.defaultPreventedAfterDispatch=!!e.defaultPrevented; } catch {} };
+  if (typeof queueMicrotask === 'function') queueMicrotask(apply);
+  else Promise.resolve().then(apply);
+}
+
+function inputProbeEventSummaryLabel(event) {
+  if (!event) return '--';
+  if (event.code) return `${event.type}: ${event.code}${event.altKey ? ' +ALT' : ''}${event.ctrlKey ? ' +CTRL' : ''}${event.shiftKey ? ' +SHIFT' : ''}`;
+  if (Number.isFinite(event.button) || Number.isFinite(event.buttons)) return `${event.type}: b=${event.button ?? '-'} buttons=${event.buttons ?? '-'}`;
+  return event.type || '--';
+}
+
+function resetInputProbeTelemetry(keepEnabled = true) {
+  const P=S.inputProbe;
+  P.events.clear();
+  P.lastEvent=null;
+  P.keyDownCodes=Object.create(null);
+  P.counters={
+    keydown:0,keyup:0,pointerdown:0,pointerup:0,mousedown:0,mouseup:0,contextmenu:0,
+    mouseDownWhileOtherHeld:0,multiButtonStateEvents:0,fullscreenchange:0,pointerlockchange:0,
+    visibilitychange:0,windowBlur:0,windowFocus:0
+  };
+  if (!keepEnabled) {
+    P.startedAtSec=null;
+    P.stoppedAtSec=null;
+  }
+}
+
+function bindInputProbeEvents() {
+  const P=S.inputProbe;
+  if (P.bound) return;
+
+  const onKeyDown=e => {
+    if (!P.enabled) return;
+    P.counters.keydown++;
+    const code=e.code || e.key || 'UNKNOWN';
+    P.keyDownCodes[code]=(P.keyDownCodes[code]||0)+1;
+    const rec=pushInputProbeEvent('KEYDOWN',inputKeyboardEventView(e));
+    noteDefaultPreventedAfterDispatch(rec,e);
+  };
+  const onKeyUp=e => {
+    if (!P.enabled) return;
+    P.counters.keyup++;
+    const rec=pushInputProbeEvent('KEYUP',inputKeyboardEventView(e));
+    noteDefaultPreventedAfterDispatch(rec,e);
+  };
+  const onPointerDown=e => {
+    if (!P.enabled) return;
+    P.counters.pointerdown++;
+    const view=inputPointerEventView(e);
+    if (view.multiButtonState) P.counters.multiButtonStateEvents++;
+    const rec=pushInputProbeEvent('POINTERDOWN',view);
+    noteDefaultPreventedAfterDispatch(rec,e);
+  };
+  const onPointerUp=e => {
+    if (!P.enabled) return;
+    P.counters.pointerup++;
+    const view=inputPointerEventView(e);
+    if (view.multiButtonState) P.counters.multiButtonStateEvents++;
+    const rec=pushInputProbeEvent('POINTERUP',view);
+    noteDefaultPreventedAfterDispatch(rec,e);
+  };
+  const onMouseDown=e => {
+    if (!P.enabled) return;
+    P.counters.mousedown++;
+    const view=inputPointerEventView(e);
+    const pressedMask=Number.isFinite(view.buttons) ? view.buttons : 0;
+    // MouseEvent.button mapping differs from buttons bitmask. Explicit masks avoid relying on array math below.
+    const buttonMask=view.button===0?1:view.button===1?4:view.button===2?2:view.button===3?8:view.button===4?16:0;
+    const otherHeld=buttonMask ? (pressedMask & ~buttonMask) !== 0 : (view.multiButtonState === true);
+    if (otherHeld) P.counters.mouseDownWhileOtherHeld++;
+    if (view.multiButtonState) P.counters.multiButtonStateEvents++;
+    const rec=pushInputProbeEvent('MOUSEDOWN',{...view,otherButtonAlreadyHeld:otherHeld});
+    noteDefaultPreventedAfterDispatch(rec,e);
+  };
+  const onMouseUp=e => {
+    if (!P.enabled) return;
+    P.counters.mouseup++;
+    const view=inputPointerEventView(e);
+    if (view.multiButtonState) P.counters.multiButtonStateEvents++;
+    const rec=pushInputProbeEvent('MOUSEUP',view);
+    noteDefaultPreventedAfterDispatch(rec,e);
+  };
+  const onContextMenu=e => {
+    if (!P.enabled) return;
+    P.counters.contextmenu++;
+    const rec=pushInputProbeEvent('CONTEXTMENU',inputPointerEventView(e));
+    noteDefaultPreventedAfterDispatch(rec,e);
+  };
+  const onFullscreen=() => {
+    if (!P.enabled && !P.keyboardLock.active) return;
+    P.counters.fullscreenchange++;
+    const active=!!fullscreenElementCompat();
+    pushInputProbeEvent('FULLSCREEN_CHANGE',{active},P.keyboardLock.active);
+    if (!active && P.keyboardLock.active) {
+      P.keyboardLock.active=false;
+      P.keyboardLock.requestedCodes=[];
+      P.keyboardLock.lastChangeAtSec=round(elapsed(),3);
+      addEvent('INPUT_KEYBOARD_LOCK_CHANGE',{active:false,reason:'FULLSCREEN_EXIT'});
+    }
+    updateUI();
+  };
+  const onPointerLock=() => {
+    if (!P.enabled) return;
+    P.counters.pointerlockchange++;
+    pushInputProbeEvent('POINTER_LOCK_CHANGE',{active:!!document.pointerLockElement});
+    updateUI();
+  };
+  const onVisibility=() => {
+    if (!P.enabled) return;
+    P.counters.visibilitychange++;
+    pushInputProbeEvent('VISIBILITY_CHANGE',{hidden:!!document.hidden,state:document.visibilityState || null});
+  };
+  const onBlur=() => {
+    if (!P.enabled) return;
+    P.counters.windowBlur++;
+    pushInputProbeEvent('WINDOW_BLUR');
+  };
+  const onFocus=() => {
+    if (!P.enabled) return;
+    P.counters.windowFocus++;
+    pushInputProbeEvent('WINDOW_FOCUS');
+  };
+
+  P.handlers={onKeyDown,onKeyUp,onPointerDown,onPointerUp,onMouseDown,onMouseUp,onContextMenu,onFullscreen,onPointerLock,onVisibility,onBlur,onFocus};
+  window.addEventListener('keydown',onKeyDown,true);
+  window.addEventListener('keyup',onKeyUp,true);
+  window.addEventListener('pointerdown',onPointerDown,true);
+  window.addEventListener('pointerup',onPointerUp,true);
+  window.addEventListener('mousedown',onMouseDown,true);
+  window.addEventListener('mouseup',onMouseUp,true);
+  window.addEventListener('contextmenu',onContextMenu,true);
+  document.addEventListener('fullscreenchange',onFullscreen,true);
+  document.addEventListener('webkitfullscreenchange',onFullscreen,true);
+  document.addEventListener('pointerlockchange',onPointerLock,true);
+  document.addEventListener('visibilitychange',onVisibility,true);
+  window.addEventListener('blur',onBlur,true);
+  window.addEventListener('focus',onFocus,true);
+  P.bound=true;
+}
+
+function unbindInputProbeEvents() {
+  const P=S.inputProbe;
+  if (!P.bound || !P.handlers) return;
+  const h=P.handlers;
+  window.removeEventListener('keydown',h.onKeyDown,true);
+  window.removeEventListener('keyup',h.onKeyUp,true);
+  window.removeEventListener('pointerdown',h.onPointerDown,true);
+  window.removeEventListener('pointerup',h.onPointerUp,true);
+  window.removeEventListener('mousedown',h.onMouseDown,true);
+  window.removeEventListener('mouseup',h.onMouseUp,true);
+  window.removeEventListener('contextmenu',h.onContextMenu,true);
+  document.removeEventListener('fullscreenchange',h.onFullscreen,true);
+  document.removeEventListener('webkitfullscreenchange',h.onFullscreen,true);
+  document.removeEventListener('pointerlockchange',h.onPointerLock,true);
+  document.removeEventListener('visibilitychange',h.onVisibility,true);
+  window.removeEventListener('blur',h.onBlur,true);
+  window.removeEventListener('focus',h.onFocus,true);
+  P.handlers=null;
+  P.bound=false;
+}
+
+function setInputProbeEnabled(enabled, reason='UI') {
+  const P=S.inputProbe;
+  enabled=!!enabled;
+  if (enabled === P.enabled) return;
+  if (enabled) {
+    resetInputProbeTelemetry(true);
+    bindInputProbeEvents();
+    P.enabled=true;
+    P.startedAtSec=round(elapsed(),3);
+    P.stoppedAtSec=null;
+    if (P.autoStopTimer) clearTimeout(P.autoStopTimer);
+    P.autoStopTimer=setTimeout(() => setInputProbeEnabled(false,'AUTO_TIMEOUT'), INPUT_PROBE_AUTO_STOP_MS);
+    pushInputProbeEvent('PROBE_START',{reason,autoStopMs:INPUT_PROBE_AUTO_STOP_MS},true);
+    addEvent('INPUT_PROBE_START',{reason,maxEvents:MAX_INPUT_PROBE_EVENTS,autoStopMs:INPUT_PROBE_AUTO_STOP_MS});
+  } else {
+    pushInputProbeEvent('PROBE_STOP',{reason},true);
+    P.enabled=false;
+    P.stoppedAtSec=round(elapsed(),3);
+    if (P.autoStopTimer) { clearTimeout(P.autoStopTimer); P.autoStopTimer=null; }
+    void releaseKeyboardLock(`PROBE_STOP_${reason}`);
+    unbindInputProbeEvents();
+    addEvent('INPUT_PROBE_STOP',{reason,eventCount:P.events.count});
+  }
+  updateUI();
+}
+
+async function requestKeyboardLockForGameKeys() {
+  const P=S.inputProbe;
+  const Kb=P.keyboardLock;
+  Kb.requestCount++;
+  if (!Kb.supported) {
+    Kb.failureCount++;
+    Kb.lastError='KEYBOARD_LOCK_UNSUPPORTED';
+    pushInputProbeEvent('KEYBOARD_LOCK_ERROR',{error:Kb.lastError},true);
+    addEvent('INPUT_KEYBOARD_LOCK_ERROR',{error:Kb.lastError});
+    updateUI();
+    return false;
+  }
+  if (!fullscreenElementCompat()) {
+    Kb.failureCount++;
+    Kb.lastError='FULLSCREEN_REQUIRED_FOR_LOCK_TEST';
+    pushInputProbeEvent('KEYBOARD_LOCK_ERROR',{error:Kb.lastError},true);
+    addEvent('INPUT_KEYBOARD_LOCK_ERROR',{error:Kb.lastError});
+    updateUI();
+    return false;
+  }
+  try {
+    const codes=['Escape','Tab'];
+    await navigator.keyboard.lock(codes);
+    Kb.active=true;
+    Kb.requestedCodes=codes;
+    Kb.successCount++;
+    Kb.lastError=null;
+    Kb.lastChangeAtSec=round(elapsed(),3);
+    pushInputProbeEvent('KEYBOARD_LOCK_CHANGE',{active:true,codes,reason:'USER_TEST'},true);
+    addEvent('INPUT_KEYBOARD_LOCK_CHANGE',{active:true,codes,reason:'USER_TEST'});
+    updateUI();
+    return true;
+  } catch (e) {
+    Kb.active=false;
+    Kb.requestedCodes=[];
+    Kb.failureCount++;
+    Kb.lastError=String(e?.name || e?.message || e).slice(0,180);
+    pushInputProbeEvent('KEYBOARD_LOCK_ERROR',{error:Kb.lastError},true);
+    addEvent('INPUT_KEYBOARD_LOCK_ERROR',{error:Kb.lastError});
+    updateUI();
+    return false;
+  }
+}
+
+async function releaseKeyboardLock(reason='USER') {
+  const P=S.inputProbe;
+  const Kb=P.keyboardLock;
+  if (!Kb.supported) return false;
+  try { navigator.keyboard.unlock(); } catch {}
+  const wasActive=Kb.active;
+  Kb.active=false;
+  Kb.requestedCodes=[];
+  Kb.lastChangeAtSec=round(elapsed(),3);
+  if (wasActive) {
+    pushInputProbeEvent('KEYBOARD_LOCK_CHANGE',{active:false,reason},true);
+    addEvent('INPUT_KEYBOARD_LOCK_CHANGE',{active:false,reason});
+  }
+  updateUI();
+  return true;
+}
+
+function inputProbeSnapshot() {
+  const P=S.inputProbe;
+  return {
+    schemaVersion:1,
+    enabled:P.enabled,
+    observationalByDefault:true,
+    syntheticKeyboardEvents:false,
+    remoteInputTransportOverride:false,
+    maxEvents:MAX_INPUT_PROBE_EVENTS,
+    autoStopMs:INPUT_PROBE_AUTO_STOP_MS,
+    retainedEvents:P.events.count,
+    overwrittenEvents:Math.max(0,P.events.total-P.events.count),
+    startedAtSec:P.startedAtSec,
+    stoppedAtSec:P.stoppedAtSec,
+    counters:{...P.counters},
+    keyDownCodes:{...P.keyDownCodes},
+    keyboardLock:{...P.keyboardLock},
+    latestEvent:P.lastEvent,
+    currentState:{
+      fullscreen:!!fullscreenElementCompat(),
+      pointerLocked:!!document.pointerLockElement,
+      visibilityState:document.visibilityState || null,
+      documentHasFocus:typeof document.hasFocus === 'function' ? document.hasFocus() : null
+    },
+    diagnosticSemantics:{
+      escape:'Compare KEYDOWN/KEYUP Escape with FULLSCREEN_CHANGE. If Escape is delivered and fullscreen exits, browser default action is implicated; Keyboard Lock test can distinguish capture behavior.',
+      altTab:'Compare AltLeft/AltRight + Tab KEYDOWN against WINDOW_BLUR/VISIBILITY_CHANGE. Missing Tab before blur suggests interception above page JS.',
+      simultaneousMouse:'Compare MOUSEDOWN and POINTERDOWN while buttons bitmask contains multiple buttons. Physical mouse can emit MOUSEDOWN for the second button without a second POINTERDOWN.'
+    },
+    events:P.events.toArray()
+  };
 }
 
 // -----------------------------------------------------------------------------
@@ -3546,6 +3934,7 @@ async function startRecording() {
   S.samples.clear();
   S.events.clear();
   S.importantEvents.clear();
+  resetInputProbeTelemetry(true);
   S.contextFingerprint='';
   S.contextRawFingerprint='';
   S.contextTelemetry={changes:0,suppressedFrameRateOnly:0,frameRateSamples:0,implausibleFrameRateSamples:0,lastObservedFrameRate:null};
@@ -3957,11 +4346,12 @@ function buildExport() {
       name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
       pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
       schemaVersion:2,
-      status:'V0.8.1_RC5__TELEMETRY_INTEGRITY__NOT_CANONICAL'
+      status:'V0.8.1_RC6__INPUT_COMPATIBILITY_PROBE__NOT_CANONICAL'
     },
     exportedAt:new Date().toISOString(),
     environment:ENV,
     capabilities:CAP,
+    inputCompatibility:inputProbeSnapshot(),
     profile:currentPreferenceSnapshot(),
     control:{
       requested:{
@@ -4108,7 +4498,7 @@ function buildExport() {
       pageMethodOverrides:S.control.state==='ACTIVE' && (S.control.application?.patch?.patched||S.control.application?.patched) ? ['StreamDeviceContext.getSafeResolution','SessionHandler.getWindowResolution'] : [],
       exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
       controlModel:'PERSISTENT_AUTO_APPLY',
-      telemetryIntegrityModel:'RC5_DEDUP_PROTECTED_EVENTS_AV1_BITRATE_FALLBACK',
+      telemetryIntegrityModel:'RC6_RC5_INTEGRITY_PLUS_ON_DEMAND_INPUT_PROBE',
       legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
       longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls',
       telemetryIntegrity:{
@@ -4120,6 +4510,16 @@ function buildExport() {
         lastObservedReceiverTrackFrameRate:S.contextTelemetry.lastObservedFrameRate,
         protectedImportantEventLedger:true,
         maxImportantEvents:MAX_IMPORTANT_EVENTS
+      },
+      inputCompatibility:{
+        probeOnDemand:true,
+        probeOffByDefault:true,
+        maxInputProbeEvents:MAX_INPUT_PROBE_EVENTS,
+        inputProbeAutoStopMs:INPUT_PROBE_AUTO_STOP_MS,
+        keyboardLockUserTriggeredOnly:true,
+        keyboardLockCodes:['Escape','Tab'],
+        syntheticRemoteInput:false,
+        mouseTransportOverride:false
       }
     },
     importantEvents:S.importantEvents.toArray(),
@@ -4249,6 +4649,22 @@ function updateUI(sample = null) {
   else if (inbound && prefMode==='native') simpleStatus='NATIVA';
   setText('bcs-simple-status',simpleStatus);
 
+  const P=S.inputProbe;
+  setText('bcs-input-probe-state',P.enabled ? 'ON' : 'OFF');
+  setText('bcs-input-keyboard-lock-cap',P.keyboardLock.supported ? 'SIM' : 'NÃO');
+  setText('bcs-input-keyboard-lock-state',P.keyboardLock.active ? 'ATIVO' : 'OFF');
+  setText('bcs-input-fullscreen',fullscreenElementCompat() ? 'SIM' : 'NÃO');
+  setText('bcs-input-pointerlock',document.pointerLockElement ? 'SIM' : 'NÃO');
+  setText('bcs-input-last',inputProbeEventSummaryLabel(P.lastEvent));
+  setText('bcs-input-counts',`${P.counters.keydown}/${P.counters.mousedown}/${P.counters.pointerdown}`);
+  const probeBtn=$('bcs-input-probe-toggle');
+  if (probeBtn) probeBtn.textContent=P.enabled ? 'PARAR PROBE' : 'INICIAR PROBE';
+  const lockBtn=$('bcs-input-lock-toggle');
+  if (lockBtn) {
+    lockBtn.disabled=!P.keyboardLock.supported;
+    lockBtn.textContent=!P.keyboardLock.supported ? 'KEY LOCK N/A' : (P.keyboardLock.active ? 'LIBERAR ESC+TAB' : 'LOCK ESC+TAB');
+  }
+
   const autoBtn=$('bcs-start-session');
   if (autoBtn) autoBtn.textContent=autoEnabled ? 'AUTO ATIVO' : 'ATIVAR AUTO';
 }
@@ -4299,6 +4715,18 @@ function createUI() {
     <div class="bcs-row"><span>Estado</span><b id="bcs-control-state">SAFE</b></div>
   </div>
 
+  <div class="bcs-card" id="bcs-input-card">
+    <div class="bcs-st">INPUT COMPATIBILITY • EXPERIMENTAL</div>
+    <div class="bcs-row"><span>Probe</span><b id="bcs-input-probe-state">OFF</b></div>
+    <div class="bcs-row"><span>Keyboard Lock API</span><b id="bcs-input-keyboard-lock-cap">--</b></div>
+    <div class="bcs-row"><span>Key Lock</span><b id="bcs-input-keyboard-lock-state">OFF</b></div>
+    <div class="bcs-row"><span>Fullscreen / Pointer Lock</span><b><span id="bcs-input-fullscreen">--</span> / <span id="bcs-input-pointerlock">--</span></b></div>
+    <div class="bcs-row"><span>Key↓ / Mouse↓ / Pointer↓</span><b id="bcs-input-counts">0/0/0</b></div>
+    <div class="bcs-row"><span>Último evento</span><b id="bcs-input-last">--</b></div>
+    <div class="bcs-grid"><button id="bcs-input-probe-toggle" class="bcs-btn bcs-primary">INICIAR PROBE</button><button id="bcs-input-lock-toggle" class="bcs-btn">LOCK ESC+TAB</button></div>
+    <div class="bcs-note">Probe é observacional, OFF por padrão e para sozinho após 2 min. LOCK ESC+TAB é teste reversível via Keyboard Lock; exige fullscreen e interação do usuário. Nenhum input sintético é enviado ao PC remoto.</div>
+  </div>
+
   <div class="bcs-card" id="bcs-analyzer-card">
     <div class="bcs-st">DEEP ANALYZER</div>
     <div class="bcs-row"><span>Estado</span><b id="bcs-deep-state">OFF</b></div>
@@ -4319,6 +4747,7 @@ function createUI() {
     if (streamCard) streamCard.style.display='none';
     if ($('bcs-safe')) $('bcs-safe').style.display='none';
     if ($('bcs-analyzer-card')) $('bcs-analyzer-card').style.display='none';
+    if ($('bcs-input-card')) $('bcs-input-card').style.display='none';
     if ($('bcs-apply-monitor')) $('bcs-apply-monitor').textContent='SALVAR CONFIG.';
     if ($('bcs-start-session')) $('bcs-start-session').textContent='ATIVAR AUTO';
   } else {
@@ -4389,6 +4818,11 @@ function createUI() {
   $('bcs-start-session').addEventListener('click', prepareNextSessionFromUI);
   $('bcs-safe').addEventListener('click', disarmResolutionControl);
   $('bcs-deep-toggle')?.addEventListener('click', () => setDeepAnalyzerEnabled(!S.deep.enabled,'UI'));
+  $('bcs-input-probe-toggle')?.addEventListener('click', () => setInputProbeEnabled(!S.inputProbe.enabled,'UI'));
+  $('bcs-input-lock-toggle')?.addEventListener('click', async () => {
+    if (S.inputProbe.keyboardLock.active) await releaseKeyboardLock('USER_UI');
+    else await requestKeyboardLockForGameKeys();
+  });
   $('bcs-download')?.addEventListener('click', downloadJSON);
 
   refreshCustomVisibility();
@@ -4413,11 +4847,12 @@ function boot() {
   addEvent('SUITE_BOOT',{
     version:VERSION,
     build:BUILD,
-    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__VIRTUAL_MONITOR_PLUS_NATIVE_FPS_AND_BITRATE',
+    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__VIRTUAL_MONITOR_PLUS_NATIVE_FPS_AND_BITRATE__ON_DEMAND_INPUT_PROBE',
     controlModel:'PERSISTENT_AUTO_APPLY',
     profileEnabled:isAutoEnabled(),
     bootBehavior:isAutoEnabled() ? 'AUTO_APPLY_ENABLED' : 'SAFE',
-    environment:{browser:ENV.browser,likelyPlatform:ENV.likelyPlatform}
+    environment:{browser:ENV.browser,likelyPlatform:ENV.likelyPlatform},
+    inputCompatibility:{probeEnabled:false,keyboardLock:CAP.input.keyboardLock,pointerEvents:CAP.input.pointer,pointerLock:CAP.input.pointerLock}
   });
   if (isAutoEnabled()) {
     addEvent('AUTO_PROFILE_BOOT',{
