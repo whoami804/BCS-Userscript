@@ -12,49 +12,47 @@ Abra essa URL no navegador em que o Tampermonkey está instalado e confirme **In
 
 ## Beta publicada
 
-- runtime: `v0.8.1-rc9 — Mouse Payload Mapping + Immersive Game Mode + Telemetry Integrity`;
-- status: `STATIC PASS / TARGETED PAYLOAD OBSERVER SMOKE PASS / LAB-B LIVE PENDING / NOT CANONICAL`;
-- engineering SHA-256: `89baa6fbcd641e2848e7aedd65966ecb0d28f4f6257e36187ea284c3553e5ca2`;
-- public distribution SHA-256: `943961555fcdb03bb51fc944c707ea8cc1b959729d4cb7d3f913c6df2db6d2ee`.
+- runtime: `v0.8.1-rc10 — Minimal Multi-Button Reconciliation + Immersive Game Mode + Telemetry Integrity`;
+- status: `STATIC PASS / TARGETED RECONCILIATION SMOKE PASS / LAB-B LIVE PENDING / NOT CANONICAL`;
+- engineering SHA-256: `c2e981e54e7d58985ec2ff82593b26a2309e713a3fb43ebf60c5c6e77a0080b0`;
+- public distribution SHA-256: `8dc3efa444592403db886fb999c6ee983361c5f961604ee76c121c8befd4863e`.
 
 O SHA público difere da build de engenharia somente pelos metadados públicos `@homepageURL`, `@updateURL` e `@downloadURL`.
 
-## O que muda na RC9
+## O que muda na RC10
 
-A RC9 continua o H-014C a partir da evidência LIVE da RC8. O problema de LMB/RMB simultâneos permaneceu igual, enquanto a RC8 mostrou que existe tráfego no `ClientDataChannel` próximo às transições multi-button.
+A RC9 LIVE mapeou o protocolo nativo de botão do `ClientDataChannel` (`type:"mouse"`, `action:"button"`, `isPressed`, `btn`, `id_cmd`, `from_udp`) e mostrou que as transições do segundo botão simultâneo chegam ao DOM, mas o cliente envia `mouse/move` em vez do `mouse/button` esperado.
 
-A RC9 reduz o diagnóstico ao `RTCDataChannel` com label `ClientDataChannel` e mapeia uma representação **sanitizada** do payload para comparar:
+A RC10 adiciona um **fix experimental manual** e estreito. Durante `FIX TESTE`:
 
-`LMB DOWN/UP → RMB DOWN/UP → LMB enquanto RMB está segurado → RMB enquanto LMB está segurado`.
+- aprende em memória o formato de um pacote nativo `mouse/button` usando cliques individuais;
+- marca somente as quatro transições simultâneas LMB/RMB de DOWN/UP;
+- se o Boosteroid já enviar o botão correto, não interfere;
+- caso contrário, substitui o primeiro `mouse/move` correlacionado pelo `mouse/button` faltante;
+- reutiliza o `id_cmd` e `from_udp` do próprio pacote nativo substituído;
+- não cria um segundo `send()` e não inventa contador de comando.
 
-A RC9:
+A RC10 não cria `MouseEvent`, `PointerEvent` ou `KeyboardEvent` sintético, não exporta payload bruto e não altera Stream Control, Page Bridge, RTC Processing ou Long Session.
 
-- não guarda payload bruto;
-- quando o payload é JSON, preserva estrutura/caminhos e apenas valores seguros para diagnóstico de input;
-- strings não relacionadas a input viram somente hash + tamanho;
-- números grandes são reduzidos a classe/sinal/hash;
-- não altera, bloqueia ou reenvia `send()`;
-- não cria `MouseEvent`, `PointerEvent` ou `KeyboardEvent` sintético;
-- não substitui o mouse;
-- não altera Stream Control, Page Bridge, RTC Processing ou Long Session.
+## Gate LIVE RC10
 
-## Gate LIVE RC9
+Com Pointer Lock ativo:
 
-Com Pointer Lock ativo e o mouse parado durante cada sequência:
+`INICIAR FIX TESTE → LMB x3 → RMB x3 → segurar RMB + LMB x3 → soltar tudo → segurar LMB + RMB x3 → soltar tudo → PARAR FIX TESTE → BAIXAR LOG`.
 
-`INICIAR PAYLOAD TESTE → LMB x3 → RMB x3 → segurar RMB + LMB x3 → segurar LMB + RMB x3 → PARAR PAYLOAD TESTE → BAIXAR LOG`.
+Durante as duas sequências simultâneas, confirme no jogo se **os dois botões passaram a atuar juntos**. Também verifique se nenhum botão fica preso após soltar.
 
-O teste encerra automaticamente após 60 segundos.
+O teste encerra automaticamente após 60 segundos, mas a RC10 impede o stop enquanto o último estado físico observado ainda indicar botão pressionado.
 
 ## Invariantes
 
 - Stream Control permanece congelado;
-- Page Bridge/Stream Control, RTC Processing, Long Session e Immersive RC7 permanecem byte-identical à RC8;
+- Page Bridge/Stream Control, RTC Processing, Long Session e Immersive RC7 permanecem byte-identical à RC9;
 - continua um único `getStats()` por sample;
 - zero hook de `RTCPeerConnection.prototype`;
-- WebSocket não faz parte do mapping RC9;
-- zero input sintético;
-- RC9 é beta e **não canônica** até Gate LIVE.
+- zero input DOM sintético;
+- nenhuma injeção de `send()` extra;
+- RC10 é beta experimental e **não canônica** até Gate LIVE.
 
 ## Privacidade
 
