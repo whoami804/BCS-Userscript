@@ -3,11 +3,11 @@ name: Publish beta userscript
 on:
   push:
     paths:
-      - 'patches/rc6-to-rc7.patch.gz.b64'
+      - 'patches/rc7-to-rc8.patch.gz.b64'
       - '.github/workflows/publish-beta.yml'
   pull_request:
     paths:
-      - 'patches/rc6-to-rc7.patch.gz.b64'
+      - 'patches/rc7-to-rc8.patch.gz.b64'
       - '.github/workflows/publish-beta.yml'
 
 permissions:
@@ -26,11 +26,11 @@ jobs:
       - name: Patch and validate beta userscript
         shell: bash
         run: |
-          echo '347452b473adf799c38c136a42eb8306bfcb9f5276a4e93eb727b2d2bb42b605  control-suite-boosteroid-beta.user.js' | sha256sum -c -
-          base64 -d patches/rc6-to-rc7.patch.gz.b64 | gzip -d > /tmp/rc6-to-rc7.patch
+          echo 'cd73fbb5c3c35e272bbf420b8b908702c247977fb0e3533be9014d1ec94dd17e  control-suite-boosteroid-beta.user.js' | sha256sum -c -
+          base64 -d patches/rc7-to-rc8.patch.gz.b64 | gzip -d > /tmp/rc7-to-rc8.patch
           cp control-suite-boosteroid-beta.user.js /tmp/beta-next.user.js
-          patch --batch /tmp/beta-next.user.js < /tmp/rc6-to-rc7.patch
-          echo 'cd73fbb5c3c35e272bbf420b8b908702c247977fb0e3533be9014d1ec94dd17e  /tmp/beta-next.user.js' | sha256sum -c -
+          patch --batch /tmp/beta-next.user.js < /tmp/rc7-to-rc8.patch
+          echo 'c1c42dc58fa9f0a70b7c098df67d715d534243fe0af561050ce173335e04d720  /tmp/beta-next.user.js' | sha256sum -c -
           node --check /tmp/beta-next.user.js
           mv /tmp/beta-next.user.js control-suite-boosteroid-beta.user.js
 
@@ -44,5 +44,5 @@ jobs:
             echo 'No distribution change.'
             exit 0
           fi
-          git commit -m 'Publish v0.8.1-rc7 beta userscript'
+          git commit -m 'Publish v0.8.1-rc8 beta userscript'
           git push origin HEAD:${{ github.head_ref || github.ref_name }}
