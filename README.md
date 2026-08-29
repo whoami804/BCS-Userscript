@@ -12,44 +12,49 @@ Abra essa URL no navegador em que o Tampermonkey está instalado e confirme **In
 
 ## Beta publicada
 
-- runtime: `v0.8.1-rc8 — Mouse Transport Discovery + Immersive Game Mode + Telemetry Integrity`;
-- status: `STATIC PASS / TARGETED TRANSPORT OBSERVER SMOKE PASS / LAB-B LIVE PENDING / NOT CANONICAL`;
-- engineering SHA-256: `e7f084cb9a176a85b79422ec0f5cf78c756d15766839e6a1aaa1feec80158966`;
-- public distribution SHA-256: `c1c42dc58fa9f0a70b7c098df67d715d534243fe0af561050ce173335e04d720`.
+- runtime: `v0.8.1-rc9 — Mouse Payload Mapping + Immersive Game Mode + Telemetry Integrity`;
+- status: `STATIC PASS / TARGETED PAYLOAD OBSERVER SMOKE PASS / LAB-B LIVE PENDING / NOT CANONICAL`;
+- engineering SHA-256: `89baa6fbcd641e2848e7aedd65966ecb0d28f4f6257e36187ea284c3553e5ca2`;
+- public distribution SHA-256: `943961555fcdb03bb51fc944c707ea8cc1b959729d4cb7d3f913c6df2db6d2ee`.
 
 O SHA público difere da build de engenharia somente pelos metadados públicos `@homepageURL`, `@updateURL` e `@downloadURL`.
 
-## O que muda na RC8
+## O que muda na RC9
 
-A RC8 preserva o Immersive Game Mode da RC7 e acrescenta um teste **diagnóstico e on-demand** para H-014C, o problema de LMB/RMB simultâneos.
+A RC9 continua o H-014C a partir da evidência LIVE da RC8. O problema de LMB/RMB simultâneos permaneceu igual, enquanto a RC8 mostrou que existe tráfego no `ClientDataChannel` próximo às transições multi-button.
 
-Durante o teste, a RC8 correlaciona transições DOM de botão com sends observáveis em `RTCDataChannel.prototype.send` e `WebSocket.prototype.send`. Os hooks são pass-through e a captura detalhada só ocorre perto dos cliques marcados.
+A RC9 reduz o diagnóstico ao `RTCDataChannel` com label `ClientDataChannel` e mapeia uma representação **sanitizada** do payload para comparar:
 
-A RC8:
+`LMB DOWN/UP → RMB DOWN/UP → LMB enquanto RMB está segurado → RMB enquanto LMB está segurado`.
 
-- não captura payload bruto;
-- não altera ou bloqueia `send()`;
+A RC9:
+
+- não guarda payload bruto;
+- quando o payload é JSON, preserva estrutura/caminhos e apenas valores seguros para diagnóstico de input;
+- strings não relacionadas a input viram somente hash + tamanho;
+- números grandes são reduzidos a classe/sinal/hash;
+- não altera, bloqueia ou reenvia `send()`;
 - não cria `MouseEvent`, `PointerEvent` ou `KeyboardEvent` sintético;
-- não reenvia botão;
-- não substitui movimento do mouse;
+- não substitui o mouse;
 - não altera Stream Control, Page Bridge, RTC Processing ou Long Session.
 
-## Gate LIVE RC8
+## Gate LIVE RC9
 
-Com o mouse parado durante cada sequência:
+Com Pointer Lock ativo e o mouse parado durante cada sequência:
 
-`LMB x3 → RMB x3 → segurar RMB + LMB x3 → segurar LMB + RMB x3 → PARAR MOUSE TESTE → BAIXAR LOG`.
+`INICIAR PAYLOAD TESTE → LMB x3 → RMB x3 → segurar RMB + LMB x3 → segurar LMB + RMB x3 → PARAR PAYLOAD TESTE → BAIXAR LOG`.
 
 O teste encerra automaticamente após 60 segundos.
 
 ## Invariantes
 
 - Stream Control permanece congelado;
-- Page Bridge permanece byte-identical à RC7;
+- Page Bridge/Stream Control, RTC Processing, Long Session e Immersive RC7 permanecem byte-identical à RC8;
 - continua um único `getStats()` por sample;
 - zero hook de `RTCPeerConnection.prototype`;
-- zero construtor sintético `KeyboardEvent` / `MouseEvent` / `PointerEvent`;
-- RC8 é beta e **não canônica** até Gate LIVE.
+- WebSocket não faz parte do mapping RC9;
+- zero input sintético;
+- RC9 é beta e **não canônica** até Gate LIVE.
 
 ## Privacidade
 
