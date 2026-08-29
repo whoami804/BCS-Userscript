@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc6
-// @description  Input Compatibility Probe: on-demand keyboard/mouse/fullscreen evidence plus reversible Keyboard Lock test; no mouse/keyboard transport override.
+// @version      0.8.1-rc7
+// @description  Immersive Game Mode: owned fullscreen + scoped Keyboard Lock + Pointer Lock lifecycle, with clean reversible exit; preserves RC6 input evidence and frozen Stream Control.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc6';
-const BUILD = 'Input Compatibility Probe + Telemetry Integrity - RC6';
+const VERSION = '0.8.1-rc7';
+const BUILD = 'Immersive Game Mode + Input Compatibility + Telemetry Integrity - RC7';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -30,6 +30,9 @@ const MAX_EVENTS = 2400;
 const MAX_IMPORTANT_EVENTS = 640;
 const MAX_INPUT_PROBE_EVENTS = 512;
 const INPUT_PROBE_AUTO_STOP_MS = 2 * 60 * 1000;
+const IMMERSIVE_KEY_CODES = Object.freeze(['Escape','Tab']);
+const IMMERSIVE_EXIT_CHORD = Object.freeze({ code:'Escape', ctrlKey:true, altKey:true, shiftKey:true });
+const IMMERSIVE_EXIT_CHORD_LABEL = 'Ctrl+Alt+Shift+Esc';
 const LONG_SESSION_CHECKPOINT_MS = 60 * 1000;
 const LONG_SESSION_MEMORY_MS = 5 * 60 * 1000;
 const LONG_SESSION_STORAGE_MS = 5 * 60 * 1000;
@@ -290,7 +293,8 @@ const IMPORTANT_EVENT_TYPES = new Set([
   'VISIBILITY_CHANGE','SAMPLER_ERROR','BRIDGE_INSTALL_ERROR',
   'LONG_SESSION_CHECKPOINT_ERROR','LONG_SESSION_PERSISTENCE_ERROR','LONG_SESSION_PERSISTENCE_PRUNE_ERROR',
   'LONG_SESSION_PERSISTENCE_RECOVERED','LONG_SESSION_PERSISTENCE_UNAVAILABLE',
-  'INPUT_PROBE_START','INPUT_PROBE_STOP','INPUT_KEYBOARD_LOCK_CHANGE','INPUT_KEYBOARD_LOCK_ERROR'
+  'INPUT_PROBE_START','INPUT_PROBE_STOP','INPUT_KEYBOARD_LOCK_CHANGE','INPUT_KEYBOARD_LOCK_ERROR',
+  'IMMERSIVE_ENTER','IMMERSIVE_EXIT','IMMERSIVE_FULLSCREEN_CHANGE','IMMERSIVE_POINTER_LOCK_CHANGE','IMMERSIVE_LOCK_ERROR'
 ]);
 
 function detectEnvironment() {
@@ -465,6 +469,7 @@ const S = {
     keyboardLock: {
       supported: !!navigator.keyboard && typeof navigator.keyboard.lock === 'function' && typeof navigator.keyboard.unlock === 'function',
       active: false,
+      owner: null,
       requestedCodes: [],
       requestCount: 0,
       successCount: 0,
@@ -472,6 +477,33 @@ const S = {
       lastError: null,
       lastChangeAtSec: null
     }
+  },
+  immersive: {
+    phase: 'OFF',
+    active: false,
+    entering: false,
+    exiting: false,
+    bound: false,
+    handlers: null,
+    target: null,
+    targetLabel: null,
+    fullscreenOwned: false,
+    pointerLockOwned: false,
+    keyboardLockOwned: false,
+    panelWasOpen: false,
+    enteredAtSec: null,
+    exitedAtSec: null,
+    enterCount: 0,
+    exitCount: 0,
+    pointerLockRequestCount: 0,
+    pointerLockSuccessCount: 0,
+    pointerLockFailureCount: 0,
+    keyboardLockRequestCount: 0,
+    keyboardLockSuccessCount: 0,
+    keyboardLockFailureCount: 0,
+    lastError: null,
+    lastReason: null,
+    overlay: null
   },
   latestSample: null,
   longSession: {
@@ -865,6 +897,7 @@ function bindInputProbeEvents() {
     pushInputProbeEvent('FULLSCREEN_CHANGE',{active},P.keyboardLock.active);
     if (!active && P.keyboardLock.active) {
       P.keyboardLock.active=false;
+      P.keyboardLock.owner=null;
       P.keyboardLock.requestedCodes=[];
       P.keyboardLock.lastChangeAtSec=round(elapsed(),3);
       addEvent('INPUT_KEYBOARD_LOCK_CHANGE',{active:false,reason:'FULLSCREEN_EXIT'});
@@ -950,7 +983,7 @@ function setInputProbeEnabled(enabled, reason='UI') {
     P.enabled=false;
     P.stoppedAtSec=round(elapsed(),3);
     if (P.autoStopTimer) { clearTimeout(P.autoStopTimer); P.autoStopTimer=null; }
-    void releaseKeyboardLock(`PROBE_STOP_${reason}`);
+    void releaseKeyboardLock(`PROBE_STOP_${reason}`,'PROBE');
     unbindInputProbeEvents();
     addEvent('INPUT_PROBE_STOP',{reason,eventCount:P.events.count});
   }
@@ -978,9 +1011,10 @@ async function requestKeyboardLockForGameKeys() {
     return false;
   }
   try {
-    const codes=['Escape','Tab'];
+    const codes=[...IMMERSIVE_KEY_CODES];
     await navigator.keyboard.lock(codes);
     Kb.active=true;
+    Kb.owner='PROBE';
     Kb.requestedCodes=codes;
     Kb.successCount++;
     Kb.lastError=null;
@@ -991,6 +1025,7 @@ async function requestKeyboardLockForGameKeys() {
     return true;
   } catch (e) {
     Kb.active=false;
+    Kb.owner=null;
     Kb.requestedCodes=[];
     Kb.failureCount++;
     Kb.lastError=String(e?.name || e?.message || e).slice(0,180);
@@ -1001,18 +1036,21 @@ async function requestKeyboardLockForGameKeys() {
   }
 }
 
-async function releaseKeyboardLock(reason='USER') {
+async function releaseKeyboardLock(reason='USER', expectedOwner=null) {
   const P=S.inputProbe;
   const Kb=P.keyboardLock;
   if (!Kb.supported) return false;
+  if (expectedOwner && Kb.owner && Kb.owner !== expectedOwner) return false;
   try { navigator.keyboard.unlock(); } catch {}
   const wasActive=Kb.active;
+  const previousOwner=Kb.owner;
   Kb.active=false;
+  Kb.owner=null;
   Kb.requestedCodes=[];
   Kb.lastChangeAtSec=round(elapsed(),3);
   if (wasActive) {
-    pushInputProbeEvent('KEYBOARD_LOCK_CHANGE',{active:false,reason},true);
-    addEvent('INPUT_KEYBOARD_LOCK_CHANGE',{active:false,reason});
+    pushInputProbeEvent('KEYBOARD_LOCK_CHANGE',{active:false,reason,owner:previousOwner},true);
+    addEvent('INPUT_KEYBOARD_LOCK_CHANGE',{active:false,reason,owner:previousOwner});
   }
   updateUI();
   return true;
@@ -1048,6 +1086,451 @@ function inputProbeSnapshot() {
       simultaneousMouse:'Compare MOUSEDOWN and POINTERDOWN while buttons bitmask contains multiple buttons. Physical mouse can emit MOUSEDOWN for the second button without a second POINTERDOWN.'
     },
     events:P.events.toArray()
+  };
+}
+
+
+// -----------------------------------------------------------------------------
+// IMMERSIVE GAME MODE - RC7
+// User-triggered, reversible and ownership-aware. It can augment a pre-existing
+// Boosteroid fullscreen/pointer-lock state without claiming or tearing it down.
+// No synthetic remote input and no Stream Control / Page Bridge mutation.
+// -----------------------------------------------------------------------------
+function immersiveElementLabel(el) {
+  if (!el) return null;
+  try {
+    const tag=el.tagName || el.nodeName || 'ELEMENT';
+    const id=el.id ? `#${el.id}` : '';
+    return `${tag}${id}`;
+  } catch { return 'ELEMENT'; }
+}
+
+function findImmersiveFullscreenTarget() {
+  const v=S.video || findMainVideo();
+  if (!v) return document.documentElement;
+  const vw=Math.max(1,window.visualViewport?.width || innerWidth || document.documentElement.clientWidth || 1);
+  const vh=Math.max(1,window.visualViewport?.height || innerHeight || document.documentElement.clientHeight || 1);
+  const viewportArea=vw*vh;
+  let node=v.parentElement;
+  let fallback=node || document.documentElement;
+  for (let depth=0; node && node !== document.body && node !== document.documentElement && depth<7; depth++, node=node.parentElement) {
+    try {
+      const r=node.getBoundingClientRect();
+      const area=Math.max(0,r.width)*Math.max(0,r.height);
+      if (area >= viewportArea*0.55 && r.width >= vw*0.65 && r.height >= vh*0.55) return node;
+      if (area > 0) fallback=node;
+    } catch {}
+  }
+  return fallback || document.documentElement;
+}
+
+function waitForDomState(predicate, timeoutMs=400) {
+  return new Promise(resolve => {
+    const started=now();
+    const check=() => {
+      let ok=false;
+      try { ok=!!predicate(); } catch {}
+      if (ok) { resolve(true); return; }
+      if (now()-started >= timeoutMs) { resolve(false); return; }
+      setTimeout(check,16);
+    };
+    check();
+  });
+}
+
+async function requestFullscreenCompat(target) {
+  if (!target) throw new Error('IMMERSIVE_NO_FULLSCREEN_TARGET');
+  if (fullscreenElementCompat()) return true;
+  const standard=target.requestFullscreen;
+  const webkit=target.webkitRequestFullscreen;
+  if (typeof standard === 'function') {
+    try {
+      const out=standard.call(target,{navigationUI:'hide'});
+      if (out && typeof out.then === 'function') await out;
+    } catch (firstError) {
+      const out=standard.call(target);
+      if (out && typeof out.then === 'function') await out;
+    }
+  } else if (typeof webkit === 'function') {
+    const out=webkit.call(target);
+    if (out && typeof out.then === 'function') await out;
+  } else {
+    throw new Error('FULLSCREEN_API_UNAVAILABLE');
+  }
+  if (fullscreenElementCompat()) return true;
+  return waitForDomState(() => !!fullscreenElementCompat(),450);
+}
+
+async function exitFullscreenCompat() {
+  const standard=document.exitFullscreen;
+  const webkit=document.webkitExitFullscreen;
+  if (typeof standard === 'function') {
+    const out=standard.call(document);
+    if (out && typeof out.then === 'function') await out;
+    return true;
+  }
+  if (typeof webkit === 'function') {
+    const out=webkit.call(document);
+    if (out && typeof out.then === 'function') await out;
+    return true;
+  }
+  return false;
+}
+
+async function requestPointerLockCompat(target) {
+  if (!target || typeof target.requestPointerLock !== 'function') throw new Error('POINTER_LOCK_API_UNAVAILABLE');
+  const out=target.requestPointerLock();
+  if (out && typeof out.then === 'function') await out;
+  if (document.pointerLockElement === target || document.pointerLockElement) return true;
+  return waitForDomState(() => !!document.pointerLockElement,350);
+}
+
+function releasePointerLockCompat() {
+  if (typeof document.exitPointerLock !== 'function') return false;
+  try { document.exitPointerLock(); return true; } catch { return false; }
+}
+
+function setImmersiveError(error, stage='UNKNOWN') {
+  const I=S.immersive;
+  const value=String(error?.name || error?.message || error || 'UNKNOWN').slice(0,220);
+  I.lastError={stage,error:value,atSec:round(elapsed(),3)};
+  addEvent('IMMERSIVE_LOCK_ERROR',{stage,error:value});
+  return value;
+}
+
+function immersiveOverlayHost() {
+  const fs=fullscreenElementCompat();
+  if (fs && !(fs instanceof HTMLVideoElement)) return fs;
+  if (S.immersive.target && !(S.immersive.target instanceof HTMLVideoElement)) return S.immersive.target;
+  return document.body || document.documentElement;
+}
+
+function updateImmersiveOverlay() {
+  const I=S.immersive;
+  const root=I.overlay;
+  if (!root) return;
+  const status=root.querySelector('[data-bcs-immersive-status]');
+  const capture=root.querySelector('[data-bcs-immersive-capture]');
+  const pointer=!!document.pointerLockElement;
+  const key=I.keyboardLockOwned && S.inputProbe.keyboardLock.active && S.inputProbe.keyboardLock.owner==='IMMERSIVE';
+  if (status) status.textContent=`KEY ${key?'ON':(CAP.input.keyboardLock?'OFF':'N/A')} • MOUSE ${pointer?'ON':(CAP.input.pointerLock?'OFF':'N/A')}`;
+  if (capture) capture.style.display=(key && pointer) ? 'none' : 'inline-flex';
+}
+
+function mountImmersiveOverlay() {
+  const I=S.immersive;
+  if (I.overlay?.isConnected) { updateImmersiveOverlay(); return; }
+  const host=immersiveOverlayHost();
+  if (!host || !host.appendChild) return;
+  const root=document.createElement('div');
+  root.id='bcs-immersive-overlay';
+  root.innerHTML=`<span data-bcs-immersive-status>KEY -- • MOUSE --</span><button type="button" data-bcs-immersive-capture>CAPTURAR</button><button type="button" data-bcs-immersive-exit>SAIR</button>`;
+  root.querySelector('[data-bcs-immersive-capture]')?.addEventListener('click', async e => {
+    e.preventDefault();
+    e.stopPropagation();
+    await reacquireImmersiveLocks('OVERLAY_USER_GESTURE');
+  });
+  root.querySelector('[data-bcs-immersive-exit]')?.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    void exitImmersiveMode('OVERLAY_EXIT');
+  });
+  host.appendChild(root);
+  I.overlay=root;
+  updateImmersiveOverlay();
+}
+
+function unmountImmersiveOverlay() {
+  const I=S.immersive;
+  try { I.overlay?.remove(); } catch {}
+  I.overlay=null;
+}
+
+async function requestImmersiveKeyboardLock(reason='ENTER') {
+  const I=S.immersive;
+  const Kb=S.inputProbe.keyboardLock;
+  I.keyboardLockRequestCount++;
+  if (!Kb.supported) {
+    I.keyboardLockFailureCount++;
+    setImmersiveError('KEYBOARD_LOCK_UNSUPPORTED','KEYBOARD_LOCK');
+    updateImmersiveOverlay();
+    return false;
+  }
+  if (!fullscreenElementCompat()) {
+    I.keyboardLockFailureCount++;
+    setImmersiveError('FULLSCREEN_REQUIRED_FOR_KEYBOARD_LOCK','KEYBOARD_LOCK');
+    updateImmersiveOverlay();
+    return false;
+  }
+  try {
+    const codes=[...IMMERSIVE_KEY_CODES];
+    await navigator.keyboard.lock(codes);
+    Kb.active=true;
+    Kb.owner='IMMERSIVE';
+    Kb.requestedCodes=codes;
+    Kb.requestCount++;
+    Kb.successCount++;
+    Kb.lastError=null;
+    Kb.lastChangeAtSec=round(elapsed(),3);
+    I.keyboardLockOwned=true;
+    I.keyboardLockSuccessCount++;
+    pushInputProbeEvent('KEYBOARD_LOCK_CHANGE',{active:true,codes,owner:'IMMERSIVE',reason},true);
+    addEvent('INPUT_KEYBOARD_LOCK_CHANGE',{active:true,codes,owner:'IMMERSIVE',reason});
+    updateImmersiveOverlay();
+    return true;
+  } catch (e) {
+    Kb.active=false;
+    Kb.owner=null;
+    Kb.requestedCodes=[];
+    Kb.requestCount++;
+    Kb.failureCount++;
+    Kb.lastError=String(e?.name || e?.message || e).slice(0,180);
+    Kb.lastChangeAtSec=round(elapsed(),3);
+    I.keyboardLockOwned=false;
+    I.keyboardLockFailureCount++;
+    setImmersiveError(Kb.lastError,'KEYBOARD_LOCK');
+    pushInputProbeEvent('KEYBOARD_LOCK_ERROR',{error:Kb.lastError,owner:'IMMERSIVE',reason},true);
+    addEvent('INPUT_KEYBOARD_LOCK_ERROR',{error:Kb.lastError,owner:'IMMERSIVE',reason});
+    updateImmersiveOverlay();
+    return false;
+  }
+}
+
+async function requestImmersivePointerLock(reason='ENTER') {
+  const I=S.immersive;
+  if (document.pointerLockElement) {
+    I.pointerLockOwned=false;
+    updateImmersiveOverlay();
+    return true;
+  }
+  const target=S.video || fullscreenElementCompat() || I.target;
+  I.pointerLockRequestCount++;
+  if (!CAP.input.pointerLock || !target || typeof target.requestPointerLock !== 'function') {
+    I.pointerLockFailureCount++;
+    setImmersiveError('POINTER_LOCK_UNSUPPORTED','POINTER_LOCK');
+    updateImmersiveOverlay();
+    return false;
+  }
+  try {
+    const ok=await requestPointerLockCompat(target);
+    I.pointerLockOwned=!!ok && document.pointerLockElement===target;
+    if (ok) I.pointerLockSuccessCount++;
+    else I.pointerLockFailureCount++;
+    if (!ok) setImmersiveError('POINTER_LOCK_NOT_ACQUIRED','POINTER_LOCK');
+    addEvent('IMMERSIVE_POINTER_LOCK_CHANGE',{active:!!document.pointerLockElement,owned:I.pointerLockOwned,reason});
+    updateImmersiveOverlay();
+    return !!ok;
+  } catch (e) {
+    I.pointerLockOwned=false;
+    I.pointerLockFailureCount++;
+    setImmersiveError(e,'POINTER_LOCK');
+    updateImmersiveOverlay();
+    return false;
+  }
+}
+
+async function reacquireImmersiveLocks(reason='USER_RETRY') {
+  const I=S.immersive;
+  if (!I.active) return false;
+  I.lastError=null;
+  let keyOk=S.inputProbe.keyboardLock.active && S.inputProbe.keyboardLock.owner==='IMMERSIVE';
+  let pointerOk=!!document.pointerLockElement;
+  if (!keyOk) keyOk=await requestImmersiveKeyboardLock(reason);
+  if (!pointerOk) pointerOk=await requestImmersivePointerLock(reason);
+  updateUI();
+  updateImmersiveOverlay();
+  return keyOk || pointerOk;
+}
+
+function immersiveExitChordMatches(e) {
+  return !!e && e.code===IMMERSIVE_EXIT_CHORD.code && !!e.ctrlKey===IMMERSIVE_EXIT_CHORD.ctrlKey && !!e.altKey===IMMERSIVE_EXIT_CHORD.altKey && !!e.shiftKey===IMMERSIVE_EXIT_CHORD.shiftKey;
+}
+
+function bindImmersiveLifecycleEvents() {
+  const I=S.immersive;
+  if (I.bound) return;
+  const onFullscreen=() => {
+    const active=!!fullscreenElementCompat();
+    addEvent('IMMERSIVE_FULLSCREEN_CHANGE',{active,owned:I.fullscreenOwned,phase:I.phase});
+    if (!active && (I.active || I.entering || I.exiting)) {
+      void exitImmersiveMode('FULLSCREEN_LOST',{skipFullscreenExit:true,restorePanel:true});
+    } else {
+      updateImmersiveOverlay();
+      updateUI();
+    }
+  };
+  const onPointerLock=() => {
+    const active=!!document.pointerLockElement;
+    if (!active) I.pointerLockOwned=false;
+    addEvent('IMMERSIVE_POINTER_LOCK_CHANGE',{active,owned:I.pointerLockOwned,phase:I.phase});
+    updateImmersiveOverlay();
+    updateUI();
+  };
+  const onKeyDown=e => {
+    if (!I.active || !immersiveExitChordMatches(e)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    void exitImmersiveMode('EMERGENCY_EXIT_CHORD');
+  };
+  const onPageHide=() => {
+    try {
+      if (I.keyboardLockOwned) navigator.keyboard?.unlock?.();
+      if (I.pointerLockOwned) document.exitPointerLock?.();
+    } catch {}
+  };
+  I.handlers={onFullscreen,onPointerLock,onKeyDown,onPageHide};
+  document.addEventListener('fullscreenchange',onFullscreen,true);
+  document.addEventListener('webkitfullscreenchange',onFullscreen,true);
+  document.addEventListener('pointerlockchange',onPointerLock,true);
+  window.addEventListener('keydown',onKeyDown,true);
+  window.addEventListener('pagehide',onPageHide,true);
+  I.bound=true;
+}
+
+function unbindImmersiveLifecycleEvents() {
+  const I=S.immersive;
+  if (!I.bound || !I.handlers) return;
+  const h=I.handlers;
+  document.removeEventListener('fullscreenchange',h.onFullscreen,true);
+  document.removeEventListener('webkitfullscreenchange',h.onFullscreen,true);
+  document.removeEventListener('pointerlockchange',h.onPointerLock,true);
+  window.removeEventListener('keydown',h.onKeyDown,true);
+  window.removeEventListener('pagehide',h.onPageHide,true);
+  I.handlers=null;
+  I.bound=false;
+}
+
+function finalizeImmersiveExit(reason='EXIT', restorePanel=true) {
+  const I=S.immersive;
+  const wasActive=I.active || I.entering || I.exiting;
+  const shouldRestore=restorePanel && I.panelWasOpen;
+  I.active=false;
+  I.entering=false;
+  I.exiting=false;
+  I.phase='OFF';
+  I.fullscreenOwned=false;
+  I.pointerLockOwned=false;
+  I.keyboardLockOwned=false;
+  I.target=null;
+  I.targetLabel=null;
+  I.exitedAtSec=round(elapsed(),3);
+  I.lastReason=reason;
+  if (wasActive) I.exitCount++;
+  document.documentElement?.classList?.remove('bcs-immersive-active');
+  unmountImmersiveOverlay();
+  unbindImmersiveLifecycleEvents();
+  addEvent('IMMERSIVE_EXIT',{reason,atSec:I.exitedAtSec});
+  if (shouldRestore && S.ui.built) setPanel(true);
+  else updateUI();
+}
+
+async function enterImmersiveMode(reason='USER_UI') {
+  const I=S.immersive;
+  if (I.active || I.entering) return true;
+  if (!IS_STREAM_DOCUMENT) {
+    setImmersiveError('STREAM_DOCUMENT_REQUIRED','ENTER');
+    updateUI();
+    return false;
+  }
+  const video=S.video || findMainVideo();
+  if (!video) {
+    setImmersiveError('STREAM_VIDEO_NOT_FOUND','ENTER');
+    updateUI();
+    return false;
+  }
+  I.entering=true;
+  I.exiting=false;
+  I.phase='ENTERING';
+  I.lastError=null;
+  I.lastReason=reason;
+  I.panelWasOpen=!!S.ui.open;
+  I.enterCount++;
+  I.enteredAtSec=null;
+  bindImmersiveLifecycleEvents();
+  setPanel(false);
+  const preexistingFullscreen=fullscreenElementCompat();
+  I.fullscreenOwned=false;
+  try {
+    if (preexistingFullscreen) {
+      I.target=preexistingFullscreen;
+      I.targetLabel=immersiveElementLabel(preexistingFullscreen);
+    } else {
+      I.target=findImmersiveFullscreenTarget();
+      I.targetLabel=immersiveElementLabel(I.target);
+      const ok=await requestFullscreenCompat(I.target);
+      if (!ok || !fullscreenElementCompat()) throw new Error('FULLSCREEN_NOT_ACQUIRED');
+      I.fullscreenOwned=true;
+    }
+  } catch (e) {
+    setImmersiveError(e,'FULLSCREEN');
+    I.entering=false;
+    I.phase='ERROR';
+    document.documentElement?.classList?.remove('bcs-immersive-active');
+    unbindImmersiveLifecycleEvents();
+    if (I.panelWasOpen && S.ui.built) setPanel(true);
+    updateUI();
+    return false;
+  }
+  I.active=true;
+  I.entering=false;
+  I.phase='ACTIVE';
+  I.enteredAtSec=round(elapsed(),3);
+  document.documentElement?.classList?.add('bcs-immersive-active');
+  mountImmersiveOverlay();
+  const keyboardOk=await requestImmersiveKeyboardLock('ENTER');
+  const pointerOk=await requestImmersivePointerLock('ENTER');
+  addEvent('IMMERSIVE_ENTER',{reason,atSec:I.enteredAtSec,target:I.targetLabel,fullscreenOwned:I.fullscreenOwned,keyboardLock:keyboardOk,pointerLock:pointerOk,exitChord:IMMERSIVE_EXIT_CHORD_LABEL});
+  updateImmersiveOverlay();
+  updateUI();
+  return true;
+}
+
+async function exitImmersiveMode(reason='USER_UI', options={}) {
+  const I=S.immersive;
+  if ((!I.active && !I.entering && !I.exiting) || I.exiting) return true;
+  I.exiting=true;
+  I.phase='EXITING';
+  I.lastReason=reason;
+  const fullscreenOwned=I.fullscreenOwned;
+  const pointerOwned=I.pointerLockOwned;
+  const keyboardOwned=I.keyboardLockOwned;
+  if (keyboardOwned) {
+    await releaseKeyboardLock(`IMMERSIVE_${reason}`,'IMMERSIVE');
+    I.keyboardLockOwned=false;
+  }
+  if (pointerOwned && document.pointerLockElement) {
+    releasePointerLockCompat();
+    I.pointerLockOwned=false;
+  }
+  if (fullscreenOwned && !options.skipFullscreenExit && fullscreenElementCompat()) {
+    try { await exitFullscreenCompat(); }
+    catch (e) { setImmersiveError(e,'FULLSCREEN_EXIT'); }
+  }
+  finalizeImmersiveExit(reason, options.restorePanel !== false);
+  return true;
+}
+
+function immersiveSnapshot() {
+  const I=S.immersive;
+  return {
+    schemaVersion:1,
+    mode:'IMMERSIVE_GAME_MODE',
+    phase:I.phase,
+    active:I.active,
+    userTriggered:true,
+    fullscreen:{supported:CAP.display.fullscreen,active:!!fullscreenElementCompat(),ownedByRC7:I.fullscreenOwned,target:I.targetLabel,navigationUIHideRequested:true},
+    keyboardLock:{supported:CAP.input.keyboardLock,active:S.inputProbe.keyboardLock.active && S.inputProbe.keyboardLock.owner==='IMMERSIVE',ownedByRC7:I.keyboardLockOwned,codes:[...IMMERSIVE_KEY_CODES],requestCount:I.keyboardLockRequestCount,successCount:I.keyboardLockSuccessCount,failureCount:I.keyboardLockFailureCount},
+    pointerLock:{supported:CAP.input.pointerLock,active:!!document.pointerLockElement,ownedByRC7:I.pointerLockOwned,requestCount:I.pointerLockRequestCount,successCount:I.pointerLockSuccessCount,failureCount:I.pointerLockFailureCount},
+    exit:{emergencyChord:IMMERSIVE_EXIT_CHORD_LABEL,localInterceptionOnlyForEmergencyChord:true,cleanUnlockOnExit:true,preservesPreexistingFullscreenAndPointerLockOwnership:true},
+    enterCount:I.enterCount,
+    exitCount:I.exitCount,
+    enteredAtSec:I.enteredAtSec,
+    exitedAtSec:I.exitedAtSec,
+    lastReason:I.lastReason,
+    lastError:I.lastError,
+    syntheticRemoteInput:false,
+    mouseTransportOverride:false,
+    streamControlMutation:false
   };
 }
 
@@ -4346,12 +4829,13 @@ function buildExport() {
       name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
       pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
       schemaVersion:2,
-      status:'V0.8.1_RC6__INPUT_COMPATIBILITY_PROBE__NOT_CANONICAL'
+      status:'V0.8.1_RC7__IMMERSIVE_GAME_MODE__NOT_CANONICAL'
     },
     exportedAt:new Date().toISOString(),
     environment:ENV,
     capabilities:CAP,
     inputCompatibility:inputProbeSnapshot(),
+    immersiveGameMode:immersiveSnapshot(),
     profile:currentPreferenceSnapshot(),
     control:{
       requested:{
@@ -4498,7 +4982,7 @@ function buildExport() {
       pageMethodOverrides:S.control.state==='ACTIVE' && (S.control.application?.patch?.patched||S.control.application?.patched) ? ['StreamDeviceContext.getSafeResolution','SessionHandler.getWindowResolution'] : [],
       exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
       controlModel:'PERSISTENT_AUTO_APPLY',
-      telemetryIntegrityModel:'RC6_RC5_INTEGRITY_PLUS_ON_DEMAND_INPUT_PROBE',
+      telemetryIntegrityModel:'RC7_RC6_INPUT_EVIDENCE_PLUS_IMMERSIVE_GAME_MODE',
       legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
       longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls',
       telemetryIntegrity:{
@@ -4517,9 +5001,18 @@ function buildExport() {
         maxInputProbeEvents:MAX_INPUT_PROBE_EVENTS,
         inputProbeAutoStopMs:INPUT_PROBE_AUTO_STOP_MS,
         keyboardLockUserTriggeredOnly:true,
-        keyboardLockCodes:['Escape','Tab'],
+        keyboardLockCodes:[...IMMERSIVE_KEY_CODES],
         syntheticRemoteInput:false,
         mouseTransportOverride:false
+      },
+      immersiveGameMode:{
+        userTriggered:true,
+        fullscreenOwnershipAware:true,
+        keyboardLockOwnershipAware:true,
+        pointerLockOwnershipAware:true,
+        emergencyExitChord:IMMERSIVE_EXIT_CHORD_LABEL,
+        syntheticRemoteInput:false,
+        streamControlMutation:false
       }
     },
     importantEvents:S.importantEvents.toArray(),
@@ -4650,19 +5143,27 @@ function updateUI(sample = null) {
   setText('bcs-simple-status',simpleStatus);
 
   const P=S.inputProbe;
+  const I=S.immersive;
+  setText('bcs-immersive-state',I.entering ? 'ENTRANDO' : (I.exiting ? 'SAINDO' : (I.active ? 'ATIVO' : 'OFF')));
   setText('bcs-input-probe-state',P.enabled ? 'ON' : 'OFF');
   setText('bcs-input-keyboard-lock-cap',P.keyboardLock.supported ? 'SIM' : 'NÃO');
-  setText('bcs-input-keyboard-lock-state',P.keyboardLock.active ? 'ATIVO' : 'OFF');
-  setText('bcs-input-fullscreen',fullscreenElementCompat() ? 'SIM' : 'NÃO');
-  setText('bcs-input-pointerlock',document.pointerLockElement ? 'SIM' : 'NÃO');
+  setText('bcs-input-keyboard-lock-state',P.keyboardLock.active ? `ATIVO${P.keyboardLock.owner ? ` • ${P.keyboardLock.owner}` : ''}` : 'OFF');
+  setText('bcs-input-fullscreen',fullscreenElementCompat() ? (I.fullscreenOwned ? 'SIM • RC7' : 'SIM') : 'NÃO');
+  setText('bcs-input-pointerlock',document.pointerLockElement ? (I.pointerLockOwned ? 'SIM • RC7' : 'SIM') : 'NÃO');
   setText('bcs-input-last',inputProbeEventSummaryLabel(P.lastEvent));
   setText('bcs-input-counts',`${P.counters.keydown}/${P.counters.mousedown}/${P.counters.pointerdown}`);
+  setText('bcs-immersive-error',I.lastError ? `${I.lastError.stage}: ${I.lastError.error}` : '--');
   const probeBtn=$('bcs-input-probe-toggle');
   if (probeBtn) probeBtn.textContent=P.enabled ? 'PARAR PROBE' : 'INICIAR PROBE';
-  const lockBtn=$('bcs-input-lock-toggle');
-  if (lockBtn) {
-    lockBtn.disabled=!P.keyboardLock.supported;
-    lockBtn.textContent=!P.keyboardLock.supported ? 'KEY LOCK N/A' : (P.keyboardLock.active ? 'LIBERAR ESC+TAB' : 'LOCK ESC+TAB');
+  const immersiveBtn=$('bcs-immersive-toggle');
+  if (immersiveBtn) {
+    immersiveBtn.disabled=I.entering || I.exiting || !IS_STREAM_DOCUMENT;
+    immersiveBtn.textContent=I.active ? 'SAIR DO IMERSIVO' : (I.entering ? 'ENTRANDO...' : 'ENTRAR IMERSIVO');
+  }
+  const retryBtn=$('bcs-immersive-retry');
+  if (retryBtn) {
+    retryBtn.disabled=!I.active;
+    retryBtn.textContent='RECAPTURAR LOCKS';
   }
 
   const autoBtn=$('bcs-start-session');
@@ -4678,7 +5179,13 @@ function createUI() {
 #bcs-open,#bcs-panel{position:fixed;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f5f5f7}
 #bcs-open{right:10px;top:max(10px,env(safe-area-inset-top));border:1px solid #3a3a3d;border-radius:12px;background:#171719;color:#fff;padding:9px 11px;font-size:12px;font-weight:850}
 #bcs-panel{right:10px;top:max(10px,env(safe-area-inset-top));width:min(330px,calc(100vw - 20px));max-height:calc(100dvh - 20px);overflow:auto;background:#111113;border:1px solid #343438;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:11px;line-height:1.35}
-#bcs-panel *{box-sizing:border-box}.bcs-head{padding:10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2a2a2d}.bcs-title{font-size:13px;font-weight:900}.bcs-muted{opacity:.6;font-size:9px}.bcs-x{border:0;border-radius:8px;background:#262629;color:#fff;width:30px;height:30px;font-size:18px}.bcs-body{padding:9px}.bcs-card{border:1px solid #29292c;border-radius:10px;margin-bottom:8px;overflow:hidden}.bcs-st{padding:7px 8px;background:#1a1a1d;font-weight:850}.bcs-row{display:flex;justify-content:space-between;gap:10px;padding:6px 8px;border-top:1px solid #232326}.bcs-row b{text-align:right}.bcs-select,.bcs-btn{font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.bcs-select{background:#202023;color:#fff;border:1px solid #3a3a3e;border-radius:7px;padding:5px}.bcs-btn{width:100%;border:1px solid #3a3a3e;border-radius:8px;background:#222225;color:#fff;padding:9px 6px;font-weight:800}.bcs-btn:active{background:#343439}.bcs-primary{background:#2b2b31}.bcs-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:7px}.bcs-note{padding:6px 8px;opacity:.62;font-size:9px}.bcs-status{font-weight:900}.bcs-achieved{font-size:16px}.bcs-danger{border-color:#804040}`;
+#bcs-panel *{box-sizing:border-box}.bcs-head{padding:10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2a2a2d}.bcs-title{font-size:13px;font-weight:900}.bcs-muted{opacity:.6;font-size:9px}.bcs-x{border:0;border-radius:8px;background:#262629;color:#fff;width:30px;height:30px;font-size:18px}.bcs-body{padding:9px}.bcs-card{border:1px solid #29292c;border-radius:10px;margin-bottom:8px;overflow:hidden}.bcs-st{padding:7px 8px;background:#1a1a1d;font-weight:850}.bcs-row{display:flex;justify-content:space-between;gap:10px;padding:6px 8px;border-top:1px solid #232326}.bcs-row b{text-align:right}.bcs-select,.bcs-btn{font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.bcs-select{background:#202023;color:#fff;border:1px solid #3a3a3e;border-radius:7px;padding:5px}.bcs-btn{width:100%;border:1px solid #3a3a3e;border-radius:8px;background:#222225;color:#fff;padding:9px 6px;font-weight:800}.bcs-btn:active{background:#343439}.bcs-primary{background:#2b2b31}.bcs-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:7px}.bcs-note{padding:6px 8px;opacity:.62;font-size:9px}.bcs-status{font-weight:900}.bcs-achieved{font-size:16px}.bcs-danger{border-color:#804040}
+html.bcs-immersive-active,html.bcs-immersive-active body{overflow:hidden!important}
+html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display:none!important}
+#bcs-immersive-overlay{position:fixed;z-index:2147483647;right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));display:flex;gap:6px;align-items:center;padding:5px 6px;border-radius:9px;background:rgba(8,8,10,.44);border:1px solid rgba(255,255,255,.16);font:9px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff;opacity:.38;transition:opacity .16s}
+#bcs-immersive-overlay:hover,#bcs-immersive-overlay:focus-within{opacity:.95}
+#bcs-immersive-overlay button{border:1px solid rgba(255,255,255,.22);border-radius:7px;background:rgba(28,28,32,.82);color:#fff;padding:5px 7px;font:800 9px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+`;
   (document.head || document.documentElement).appendChild(style);
 
   const open = document.createElement('button');
@@ -4716,15 +5223,20 @@ function createUI() {
   </div>
 
   <div class="bcs-card" id="bcs-input-card">
-    <div class="bcs-st">INPUT COMPATIBILITY • EXPERIMENTAL</div>
-    <div class="bcs-row"><span>Probe</span><b id="bcs-input-probe-state">OFF</b></div>
+    <div class="bcs-st">IMMERSIVE GAME MODE • RC7</div>
+    <div class="bcs-row"><span>Modo</span><b id="bcs-immersive-state">OFF</b></div>
+    <div class="bcs-row"><span>Fullscreen / Pointer Lock</span><b><span id="bcs-input-fullscreen">--</span> / <span id="bcs-input-pointerlock">--</span></b></div>
     <div class="bcs-row"><span>Keyboard Lock API</span><b id="bcs-input-keyboard-lock-cap">--</b></div>
     <div class="bcs-row"><span>Key Lock</span><b id="bcs-input-keyboard-lock-state">OFF</b></div>
-    <div class="bcs-row"><span>Fullscreen / Pointer Lock</span><b><span id="bcs-input-fullscreen">--</span> / <span id="bcs-input-pointerlock">--</span></b></div>
+    <div class="bcs-row"><span>Último erro</span><b id="bcs-immersive-error">--</b></div>
+    <div class="bcs-grid"><button id="bcs-immersive-toggle" class="bcs-btn bcs-primary">ENTRAR IMERSIVO</button><button id="bcs-immersive-retry" class="bcs-btn">RECAPTURAR LOCKS</button></div>
+    <div class="bcs-note">Entrar solicita fullscreen com UI de navegação oculta, Keyboard Lock para Escape/Tab e Pointer Lock. Saída local de emergência: ${IMMERSIVE_EXIT_CHORD_LABEL}. Estados de fullscreen/pointer lock que já existiam antes da RC7 não são desmontados por ela.</div>
+    <div class="bcs-st">H-014 • DIAGNÓSTICO</div>
+    <div class="bcs-row"><span>Probe</span><b id="bcs-input-probe-state">OFF</b></div>
     <div class="bcs-row"><span>Key↓ / Mouse↓ / Pointer↓</span><b id="bcs-input-counts">0/0/0</b></div>
     <div class="bcs-row"><span>Último evento</span><b id="bcs-input-last">--</b></div>
-    <div class="bcs-grid"><button id="bcs-input-probe-toggle" class="bcs-btn bcs-primary">INICIAR PROBE</button><button id="bcs-input-lock-toggle" class="bcs-btn">LOCK ESC+TAB</button></div>
-    <div class="bcs-note">Probe é observacional, OFF por padrão e para sozinho após 2 min. LOCK ESC+TAB é teste reversível via Keyboard Lock; exige fullscreen e interação do usuário. Nenhum input sintético é enviado ao PC remoto.</div>
+    <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-input-probe-toggle" class="bcs-btn">INICIAR PROBE</button></div>
+    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC7 não cria KeyboardEvent/MouseEvent sintético e não substitui o transporte remoto.</div>
   </div>
 
   <div class="bcs-card" id="bcs-analyzer-card">
@@ -4819,9 +5331,12 @@ function createUI() {
   $('bcs-safe').addEventListener('click', disarmResolutionControl);
   $('bcs-deep-toggle')?.addEventListener('click', () => setDeepAnalyzerEnabled(!S.deep.enabled,'UI'));
   $('bcs-input-probe-toggle')?.addEventListener('click', () => setInputProbeEnabled(!S.inputProbe.enabled,'UI'));
-  $('bcs-input-lock-toggle')?.addEventListener('click', async () => {
-    if (S.inputProbe.keyboardLock.active) await releaseKeyboardLock('USER_UI');
-    else await requestKeyboardLockForGameKeys();
+  $('bcs-immersive-toggle')?.addEventListener('click', async () => {
+    if (S.immersive.active || S.immersive.entering) await exitImmersiveMode('USER_UI');
+    else await enterImmersiveMode('USER_UI');
+  });
+  $('bcs-immersive-retry')?.addEventListener('click', async () => {
+    await reacquireImmersiveLocks('PANEL_USER_GESTURE');
   });
   $('bcs-download')?.addEventListener('click', downloadJSON);
 
@@ -4847,12 +5362,13 @@ function boot() {
   addEvent('SUITE_BOOT',{
     version:VERSION,
     build:BUILD,
-    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__VIRTUAL_MONITOR_PLUS_NATIVE_FPS_AND_BITRATE__ON_DEMAND_INPUT_PROBE',
+    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC7_IMMERSIVE_GAME_MODE',
     controlModel:'PERSISTENT_AUTO_APPLY',
     profileEnabled:isAutoEnabled(),
     bootBehavior:isAutoEnabled() ? 'AUTO_APPLY_ENABLED' : 'SAFE',
     environment:{browser:ENV.browser,likelyPlatform:ENV.likelyPlatform},
-    inputCompatibility:{probeEnabled:false,keyboardLock:CAP.input.keyboardLock,pointerEvents:CAP.input.pointer,pointerLock:CAP.input.pointerLock}
+    inputCompatibility:{probeEnabled:false,keyboardLock:CAP.input.keyboardLock,pointerEvents:CAP.input.pointer,pointerLock:CAP.input.pointerLock},
+    immersiveGameMode:{enabled:false,userTriggered:true,fullscreen:CAP.display.fullscreen,keyboardLock:CAP.input.keyboardLock,pointerLock:CAP.input.pointerLock,exitChord:IMMERSIVE_EXIT_CHORD_LABEL}
   });
   if (isAutoEnabled()) {
     addEvent('AUTO_PROFILE_BOOT',{
