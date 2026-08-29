@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc7
-// @description  Immersive Game Mode: owned fullscreen + scoped Keyboard Lock + Pointer Lock lifecycle, with clean reversible exit; preserves RC6 input evidence and frozen Stream Control.
+// @version      0.8.1-rc8
+// @description  Mouse Transport Discovery for simultaneous-button H-014C: correlates DOM mouse transitions with pass-through RTCDataChannel/WebSocket sends; preserves RC7 Immersive Mode and frozen Stream Control.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc7';
-const BUILD = 'Immersive Game Mode + Input Compatibility + Telemetry Integrity - RC7';
+const VERSION = '0.8.1-rc8';
+const BUILD = 'Mouse Transport Discovery + Immersive Game Mode + Telemetry Integrity - RC8';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -30,6 +30,11 @@ const MAX_EVENTS = 2400;
 const MAX_IMPORTANT_EVENTS = 640;
 const MAX_INPUT_PROBE_EVENTS = 512;
 const INPUT_PROBE_AUTO_STOP_MS = 2 * 60 * 1000;
+const MAX_MOUSE_TRANSPORT_EVENTS = 512;
+const MOUSE_TRANSPORT_AUTO_STOP_MS = 60 * 1000;
+const MOUSE_TRANSPORT_CORRELATION_MS = 120;
+const MOUSE_TRANSPORT_CONTROL_EVENT = '__BCS_RC8_MOUSE_TRANSPORT_CONTROL__';
+const MOUSE_TRANSPORT_OBS_EVENT = '__BCS_RC8_MOUSE_TRANSPORT_OBS__';
 const IMMERSIVE_KEY_CODES = Object.freeze(['Escape','Tab']);
 const IMMERSIVE_EXIT_CHORD = Object.freeze({ code:'Escape', ctrlKey:true, altKey:true, shiftKey:true });
 const IMMERSIVE_EXIT_CHORD_LABEL = 'Ctrl+Alt+Shift+Esc';
@@ -294,6 +299,7 @@ const IMPORTANT_EVENT_TYPES = new Set([
   'LONG_SESSION_CHECKPOINT_ERROR','LONG_SESSION_PERSISTENCE_ERROR','LONG_SESSION_PERSISTENCE_PRUNE_ERROR',
   'LONG_SESSION_PERSISTENCE_RECOVERED','LONG_SESSION_PERSISTENCE_UNAVAILABLE',
   'INPUT_PROBE_START','INPUT_PROBE_STOP','INPUT_KEYBOARD_LOCK_CHANGE','INPUT_KEYBOARD_LOCK_ERROR',
+  'MOUSE_TRANSPORT_DISCOVERY_START','MOUSE_TRANSPORT_DISCOVERY_STOP',
   'IMMERSIVE_ENTER','IMMERSIVE_EXIT','IMMERSIVE_FULLSCREEN_CHANGE','IMMERSIVE_POINTER_LOCK_CHANGE','IMMERSIVE_LOCK_ERROR'
 ]);
 
@@ -476,6 +482,27 @@ const S = {
       failureCount: 0,
       lastError: null,
       lastChangeAtSec: null
+    }
+  },
+  mouseTransport: {
+    enabled: false,
+    startedAtSec: null,
+    stoppedAtSec: null,
+    autoStopTimer: null,
+    inputProbeOwned: false,
+    events: new Ring(MAX_MOUSE_TRANSPORT_EVENTS),
+    lastEvent: null,
+    lastDomEvent: null,
+    domSeq: 0,
+    counters: {
+      domEvents:0,pointerdown:0,pointerup:0,mousedown:0,mouseup:0,
+      singleButtonMouseDowns:0,multiButtonMouseDowns:0,
+      transportSends:0,rtcDataChannelSends:0,webSocketSends:0,
+      correlatedSends:0,multiButtonCorrelatedSends:0,transportErrors:0
+    },
+    pageObserver: {
+      installed:false,rtcDataChannelHook:false,webSocketHook:false,
+      pageSendCount:0,pageCorrelatedCount:0,lastState:null
     }
   },
   immersive: {
@@ -853,6 +880,7 @@ function bindInputProbeEvents() {
     const view=inputPointerEventView(e);
     if (view.multiButtonState) P.counters.multiButtonStateEvents++;
     const rec=pushInputProbeEvent('POINTERDOWN',view);
+    noteMouseTransportDomEvent('POINTERDOWN',view);
     noteDefaultPreventedAfterDispatch(rec,e);
   };
   const onPointerUp=e => {
@@ -861,6 +889,7 @@ function bindInputProbeEvents() {
     const view=inputPointerEventView(e);
     if (view.multiButtonState) P.counters.multiButtonStateEvents++;
     const rec=pushInputProbeEvent('POINTERUP',view);
+    noteMouseTransportDomEvent('POINTERUP',view);
     noteDefaultPreventedAfterDispatch(rec,e);
   };
   const onMouseDown=e => {
@@ -874,6 +903,7 @@ function bindInputProbeEvents() {
     if (otherHeld) P.counters.mouseDownWhileOtherHeld++;
     if (view.multiButtonState) P.counters.multiButtonStateEvents++;
     const rec=pushInputProbeEvent('MOUSEDOWN',{...view,otherButtonAlreadyHeld:otherHeld});
+    noteMouseTransportDomEvent('MOUSEDOWN',{...view,otherButtonAlreadyHeld:otherHeld});
     noteDefaultPreventedAfterDispatch(rec,e);
   };
   const onMouseUp=e => {
@@ -882,6 +912,7 @@ function bindInputProbeEvents() {
     const view=inputPointerEventView(e);
     if (view.multiButtonState) P.counters.multiButtonStateEvents++;
     const rec=pushInputProbeEvent('MOUSEUP',view);
+    noteMouseTransportDomEvent('MOUSEUP',view);
     noteDefaultPreventedAfterDispatch(rec,e);
   };
   const onContextMenu=e => {
@@ -1091,7 +1122,302 @@ function inputProbeSnapshot() {
 
 
 // -----------------------------------------------------------------------------
-// IMMERSIVE GAME MODE - RC7
+// MOUSE TRANSPORT DISCOVERY - RC8 / H-014C
+// Diagnostic-only. A page-context observer installs pass-through wrappers on
+// RTCDataChannel.prototype.send and WebSocket.prototype.send at document-start
+// so already-created/bound transports remain observable later. OFF by default:
+// while disabled the wrapper immediately forwards to the native method. When
+// armed, it emits metadata ONLY for sends occurring within a short window after
+// a captured mouse button transition. Raw payload bytes/strings are never kept,
+// modified, blocked or replayed. No synthetic PointerEvent/MouseEvent is created.
+// -----------------------------------------------------------------------------
+function pushMouseTransportEvent(type, data = {}, force = false) {
+  const M=S.mouseTransport;
+  if (!force && !M.enabled) return null;
+  const event={
+    t:round(elapsed(),3),
+    wallAt:new Date().toISOString(),
+    type,
+    ...data
+  };
+  M.events.push(event);
+  M.lastEvent=event;
+  return event;
+}
+
+function resetMouseTransportTelemetry() {
+  const M=S.mouseTransport;
+  M.events.clear();
+  M.lastEvent=null;
+  M.lastDomEvent=null;
+  M.domSeq=0;
+  M.counters={
+    domEvents:0,pointerdown:0,pointerup:0,mousedown:0,mouseup:0,
+    singleButtonMouseDowns:0,multiButtonMouseDowns:0,
+    transportSends:0,rtcDataChannelSends:0,webSocketSends:0,
+    correlatedSends:0,multiButtonCorrelatedSends:0,transportErrors:0
+  };
+  M.pageObserver.pageSendCount=0;
+  M.pageObserver.pageCorrelatedCount=0;
+  M.pageObserver.lastState=null;
+}
+
+function dispatchMouseTransportControl(detail) {
+  try { document.dispatchEvent(new CustomEvent(MOUSE_TRANSPORT_CONTROL_EVENT,{detail})); }
+  catch (e) { pushMouseTransportEvent('CONTROL_ERROR',{error:String(e?.message||e).slice(0,180)},true); }
+}
+
+function noteMouseTransportDomEvent(type, view) {
+  const M=S.mouseTransport;
+  if (!M.enabled || !view || view.target?.isBcsUi) return;
+  if (!['POINTERDOWN','POINTERUP','MOUSEDOWN','MOUSEUP'].includes(type)) return;
+  const domSeq=++M.domSeq;
+  const record={
+    domSeq,
+    domType:type,
+    perfNowMs:round(now(),3),
+    button:Number.isFinite(view.button)?view.button:null,
+    buttons:Number.isFinite(view.buttons)?view.buttons:null,
+    multiButtonState:view.multiButtonState===true,
+    otherButtonAlreadyHeld:view.otherButtonAlreadyHeld===true,
+    target:view.target || null
+  };
+  M.lastDomEvent=record;
+  M.counters.domEvents++;
+  const key=type.toLowerCase();
+  if (key in M.counters) M.counters[key]++;
+  if (type==='MOUSEDOWN') {
+    if (record.multiButtonState || record.otherButtonAlreadyHeld) M.counters.multiButtonMouseDowns++;
+    else M.counters.singleButtonMouseDowns++;
+  }
+  pushMouseTransportEvent('DOM_MOUSE_TRANSITION',record);
+  dispatchMouseTransportControl({action:'MARK',mark:record,correlationMs:MOUSE_TRANSPORT_CORRELATION_MS});
+}
+
+function mouseTransportPayloadView(detail) {
+  const d=detail?.payload || {};
+  return {
+    dataType:d.dataType || null,
+    size:Number.isFinite(d.size)?d.size:null,
+    fingerprint:d.fingerprint || null
+  };
+}
+
+function onMouseTransportObservation(e) {
+  const detail=e?.detail;
+  if (!detail || detail.schemaVersion!==1) return;
+  const M=S.mouseTransport;
+  if (detail.kind==='READY' || detail.kind==='STATE') {
+    M.pageObserver.installed=detail.installed===true;
+    M.pageObserver.rtcDataChannelHook=detail.hooks?.rtcDataChannel===true;
+    M.pageObserver.webSocketHook=detail.hooks?.webSocket===true;
+    M.pageObserver.lastState=detail.kind;
+    if (Number.isFinite(detail.totalSends)) M.pageObserver.pageSendCount=detail.totalSends;
+    if (Number.isFinite(detail.correlatedSends)) M.pageObserver.pageCorrelatedCount=detail.correlatedSends;
+    pushMouseTransportEvent('PAGE_OBSERVER_'+detail.kind,{hooks:detail.hooks||null,totalSends:detail.totalSends??null,correlatedSends:detail.correlatedSends??null},true);
+    updateUI();
+    return;
+  }
+  if (detail.kind!=='SEND' || !M.enabled) return;
+  M.counters.transportSends++;
+  if (detail.transport==='RTC_DATA_CHANNEL') M.counters.rtcDataChannelSends++;
+  if (detail.transport==='WEBSOCKET') M.counters.webSocketSends++;
+  if (detail.ok===false) M.counters.transportErrors++;
+  const dom=detail.domMark || null;
+  const correlated=!!dom && Number.isFinite(detail.deltaMs) && detail.deltaMs>=0 && detail.deltaMs<=MOUSE_TRANSPORT_CORRELATION_MS;
+  if (correlated) M.counters.correlatedSends++;
+  if (correlated && dom.domType==='MOUSEDOWN' && (dom.multiButtonState===true || dom.otherButtonAlreadyHeld===true || dom.buttons===3)) {
+    M.counters.multiButtonCorrelatedSends++;
+  }
+  pushMouseTransportEvent('TRANSPORT_SEND',{
+    transport:detail.transport || null,
+    ok:detail.ok!==false,
+    deltaMs:Number.isFinite(detail.deltaMs)?round(detail.deltaMs,3):null,
+    domMark:dom,
+    channel:detail.channel || null,
+    socket:detail.socket || null,
+    payload:mouseTransportPayloadView(detail),
+    error:detail.error || null
+  });
+  updateUI();
+}
+
+function installMouseTransportObserverPage() {
+  document.addEventListener(MOUSE_TRANSPORT_OBS_EVENT,onMouseTransportObservation,true);
+  const source = String.raw`
+(() => {
+  'use strict';
+  if (window.__BCS_RC8_MOUSE_TRANSPORT_OBSERVER__) return;
+  window.__BCS_RC8_MOUSE_TRANSPORT_OBSERVER__=true;
+  const CTRL='${MOUSE_TRANSPORT_CONTROL_EVENT}';
+  const OBS='${MOUSE_TRANSPORT_OBS_EVENT}';
+  const state={active:false,installed:false,seq:0,lastDom:null,correlationMs:${MOUSE_TRANSPORT_CORRELATION_MS},totalSends:0,correlatedSends:0,hooks:{rtcDataChannel:false,webSocket:false}};
+  function fnvStep(h,v){ h^=v&255; return Math.imul(h,16777619)>>>0; }
+  function payloadView(data){
+    let dataType='UNKNOWN',size=null,h=2166136261>>>0;
+    try {
+      if (typeof data==='string') {
+        dataType='STRING'; size=data.length;
+        const n=Math.min(data.length,64);
+        for(let i=0;i<n;i++){ const c=data.charCodeAt(i); h=fnvStep(h,c); h=fnvStep(h,c>>>8); }
+      } else if (data instanceof ArrayBuffer) {
+        dataType='ARRAY_BUFFER'; size=data.byteLength;
+        const a=new Uint8Array(data,0,Math.min(data.byteLength,64)); for(let i=0;i<a.length;i++) h=fnvStep(h,a[i]);
+      } else if (ArrayBuffer.isView(data)) {
+        dataType=data?.constructor?.name || 'ARRAY_BUFFER_VIEW'; size=data.byteLength;
+        const a=new Uint8Array(data.buffer,data.byteOffset,Math.min(data.byteLength,64)); for(let i=0;i<a.length;i++) h=fnvStep(h,a[i]);
+      } else if (typeof Blob!=='undefined' && data instanceof Blob) { dataType='BLOB'; size=data.size; }
+      else if (data==null) { dataType=String(data).toUpperCase(); size=0; }
+      else { dataType=data?.constructor?.name || typeof data; }
+    } catch {}
+    if (Number.isFinite(size)) { h=fnvStep(h,size); h=fnvStep(h,size>>>8); h=fnvStep(h,size>>>16); h=fnvStep(h,size>>>24); }
+    return {dataType,size,fingerprint:'fnv1a32:'+('00000000'+h.toString(16)).slice(-8)};
+  }
+  function emit(detail){
+    try { document.dispatchEvent(new CustomEvent(OBS,{detail:Object.assign({schemaVersion:1},detail)})); } catch {}
+  }
+  function correlation(nowMs){
+    const m=state.lastDom; if(!m) return null;
+    const delta=nowMs-Number(m.perfNowMs);
+    if(!Number.isFinite(delta)||delta<0||delta>state.correlationMs) return null;
+    return {mark:m,deltaMs:delta};
+  }
+  function wrap(proto,key,transport){
+    if(!proto || typeof proto[key]!=='function') return false;
+    const current=proto[key];
+    if(current && current.__bcsRc8MouseObserver===true) return true;
+    const original=current;
+    const wrapped=function(data){
+      if(!state.active) return Reflect.apply(original,this,arguments);
+      const at=performance.now(); state.totalSends++;
+      const c=correlation(at);
+      let result;
+      try {
+        result=Reflect.apply(original,this,arguments);
+        if(c){
+          state.correlatedSends++;
+          const channel=transport==='RTC_DATA_CHANNEL'?{label:this?.label||null,protocol:this?.protocol||null,id:Number.isFinite(this?.id)?this.id:null,readyState:this?.readyState||null,ordered:typeof this?.ordered==='boolean'?this.ordered:null}:null;
+          const socket=transport==='WEBSOCKET'?{readyState:Number.isFinite(this?.readyState)?this.readyState:null,protocol:this?.protocol||null,extensions:this?.extensions||null}:null;
+          emit({kind:'SEND',seq:++state.seq,transport,ok:true,pagePerfMs:at,deltaMs:c.deltaMs,domMark:c.mark,channel,socket,payload:payloadView(data)});
+        }
+        return result;
+      } catch(err) {
+        if(c) emit({kind:'SEND',seq:++state.seq,transport,ok:false,pagePerfMs:at,deltaMs:c.deltaMs,domMark:c.mark,payload:payloadView(data),error:String(err?.name||err?.message||err).slice(0,120)});
+        throw err;
+      }
+    };
+    try { Object.defineProperty(wrapped,'__bcsRc8MouseObserver',{value:true}); Object.defineProperty(wrapped,'__bcsRc8Original',{value:original}); } catch {}
+    try { proto[key]=wrapped; return proto[key]===wrapped || proto[key]?.__bcsRc8MouseObserver===true; } catch { return false; }
+  }
+  function ensureHooks(){
+    try { state.hooks.rtcDataChannel=wrap(globalThis.RTCDataChannel?.prototype,'send','RTC_DATA_CHANNEL') || state.hooks.rtcDataChannel; } catch {}
+    try { state.hooks.webSocket=wrap(globalThis.WebSocket?.prototype,'send','WEBSOCKET') || state.hooks.webSocket; } catch {}
+    state.installed=state.hooks.rtcDataChannel||state.hooks.webSocket;
+  }
+  ensureHooks();
+  document.addEventListener(CTRL,e=>{
+    const d=e?.detail||{};
+    if(d.action==='START') { ensureHooks(); state.active=true; state.seq=0; state.lastDom=null; state.totalSends=0; state.correlatedSends=0; state.correlationMs=Number(d.correlationMs)||state.correlationMs; emit({kind:'STATE',installed:state.installed,hooks:{...state.hooks},active:true,totalSends:0,correlatedSends:0}); return; }
+    if(d.action==='MARK' && state.active) { state.lastDom=d.mark||null; state.correlationMs=Number(d.correlationMs)||state.correlationMs; return; }
+    if(d.action==='STOP') { state.active=false; emit({kind:'STATE',installed:state.installed,hooks:{...state.hooks},active:false,totalSends:state.totalSends,correlatedSends:state.correlatedSends}); state.lastDom=null; return; }
+    if(d.action==='STATE') emit({kind:'STATE',installed:state.installed,hooks:{...state.hooks},active:state.active,totalSends:state.totalSends,correlatedSends:state.correlatedSends});
+  },true);
+  emit({kind:'READY',installed:state.installed,hooks:{...state.hooks},active:false,totalSends:0,correlatedSends:0});
+})();`;
+  try {
+    const sc=document.createElement('script');
+    sc.textContent=source;
+    (document.documentElement || document.head || document).appendChild(sc);
+    sc.remove();
+  } catch (e) {
+    pushMouseTransportEvent('PAGE_OBSERVER_INSTALL_ERROR',{error:String(e?.message||e).slice(0,180)},true);
+  }
+}
+
+function setMouseTransportProbeEnabled(enabled, reason='UI') {
+  const M=S.mouseTransport;
+  enabled=!!enabled;
+  if (enabled===M.enabled) return;
+  if (enabled) {
+    resetMouseTransportTelemetry();
+    M.enabled=true;
+    M.startedAtSec=round(elapsed(),3);
+    M.stoppedAtSec=null;
+    M.inputProbeOwned=!S.inputProbe.enabled;
+    if (M.inputProbeOwned) setInputProbeEnabled(true,'RC8_MOUSE_TRANSPORT');
+    dispatchMouseTransportControl({action:'START',correlationMs:MOUSE_TRANSPORT_CORRELATION_MS});
+    if (M.autoStopTimer) clearTimeout(M.autoStopTimer);
+    M.autoStopTimer=setTimeout(()=>setMouseTransportProbeEnabled(false,'AUTO_TIMEOUT'),MOUSE_TRANSPORT_AUTO_STOP_MS);
+    pushMouseTransportEvent('MOUSE_TRANSPORT_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS,correlationMs:MOUSE_TRANSPORT_CORRELATION_MS},true);
+    addEvent('MOUSE_TRANSPORT_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS,correlationMs:MOUSE_TRANSPORT_CORRELATION_MS});
+  } else {
+    dispatchMouseTransportControl({action:'STOP'});
+    pushMouseTransportEvent('MOUSE_TRANSPORT_STOP',{reason},true);
+    M.enabled=false;
+    M.stoppedAtSec=round(elapsed(),3);
+    if (M.autoStopTimer) { clearTimeout(M.autoStopTimer); M.autoStopTimer=null; }
+    if (M.inputProbeOwned && S.inputProbe.enabled) setInputProbeEnabled(false,'RC8_MOUSE_TRANSPORT_STOP');
+    M.inputProbeOwned=false;
+    addEvent('MOUSE_TRANSPORT_DISCOVERY_STOP',{reason,eventCount:M.events.count});
+  }
+  updateUI();
+}
+
+function buildMouseTransportAnalysis(events) {
+  const domDown=events.filter(e=>e.type==='DOM_MOUSE_TRANSITION'&&e.domType==='MOUSEDOWN');
+  const sends=events.filter(e=>e.type==='TRANSPORT_SEND'&&e.domMark?.domType==='MOUSEDOWN');
+  const sendsBySeq=new Map();
+  for (const e of sends) {
+    const seq=e.domMark?.domSeq; if(!Number.isFinite(seq)) continue;
+    sendsBySeq.set(seq,(sendsBySeq.get(seq)||0)+1);
+  }
+  const single=domDown.filter(e=>!(e.multiButtonState||e.otherButtonAlreadyHeld||e.buttons===3));
+  const multi=domDown.filter(e=>(e.multiButtonState||e.otherButtonAlreadyHeld||e.buttons===3));
+  const singleWithSend=single.filter(e=>(sendsBySeq.get(e.domSeq)||0)>0).length;
+  const multiWithSend=multi.filter(e=>(sendsBySeq.get(e.domSeq)||0)>0).length;
+  let classification='INCONCLUSIVE';
+  if (!S.mouseTransport.pageObserver.installed) classification='OBSERVED_TRANSPORT_HOOKS_UNAVAILABLE';
+  else if (single.length>0 && singleWithSend===0) classification='NO_SINGLE_BUTTON_CORRELATION__EXPAND_TRANSPORT_DISCOVERY';
+  else if (singleWithSend>0 && multi.length>0 && multiWithSend===0) classification='H014C_OBSERVED_TRANSPORT_GAP_STRONGLY_SUPPORTED';
+  else if (multiWithSend>0) classification='MULTI_BUTTON_REACHES_OBSERVED_TRANSPORT__CHECK_PAYLOAD_OR_DOWNSTREAM';
+  return {
+    classification,
+    mousedown:{singleCount:single.length,multiCount:multi.length,singleWithObservedTransportSend:singleWithSend,multiWithObservedTransportSend:multiWithSend},
+    caveat:'Observed transport is limited to pass-through RTCDataChannel.prototype.send and WebSocket.prototype.send hooks. Absence of correlation is not proof if Boosteroid uses another transport or cached an unobserved native path.'
+  };
+}
+
+function mouseTransportSnapshot() {
+  const M=S.mouseTransport;
+  const events=M.events.toArray();
+  return {
+    schemaVersion:1,
+    mode:'H014C_MOUSE_TRANSPORT_DISCOVERY',
+    enabled:M.enabled,
+    observationalOnly:true,
+    passThroughHooks:true,
+    rawPayloadCapture:false,
+    payloadMutation:false,
+    syntheticMouseEvents:false,
+    syntheticPointerEvents:false,
+    correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS,
+    maxEvents:MAX_MOUSE_TRANSPORT_EVENTS,
+    autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS,
+    retainedEvents:M.events.count,
+    overwrittenEvents:Math.max(0,M.events.total-M.events.count),
+    startedAtSec:M.startedAtSec,
+    stoppedAtSec:M.stoppedAtSec,
+    counters:{...M.counters},
+    pageObserver:{...M.pageObserver},
+    analysis:buildMouseTransportAnalysis(events),
+    testProtocol:['LMB alone x3 while mouse still','RMB alone x3 while mouse still','hold RMB then LMB x3','hold LMB then RMB x3','stop probe and export'],
+    events
+  };
+}
+
+
+// -----------------------------------------------------------------------------
+// IMMERSIVE GAME MODE - RC7 (PRESERVED IN RC8)
 // User-triggered, reversible and ownership-aware. It can augment a pre-existing
 // Boosteroid fullscreen/pointer-lock state without claiming or tearing it down.
 // No synthetic remote input and no Stream Control / Page Bridge mutation.
@@ -4829,12 +5155,13 @@ function buildExport() {
       name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
       pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
       schemaVersion:2,
-      status:'V0.8.1_RC7__IMMERSIVE_GAME_MODE__NOT_CANONICAL'
+      status:'V0.8.1_RC8__MOUSE_TRANSPORT_DISCOVERY__NOT_CANONICAL'
     },
     exportedAt:new Date().toISOString(),
     environment:ENV,
     capabilities:CAP,
     inputCompatibility:inputProbeSnapshot(),
+    mouseTransportDiscovery:mouseTransportSnapshot(),
     immersiveGameMode:immersiveSnapshot(),
     profile:currentPreferenceSnapshot(),
     control:{
@@ -4982,7 +5309,7 @@ function buildExport() {
       pageMethodOverrides:S.control.state==='ACTIVE' && (S.control.application?.patch?.patched||S.control.application?.patched) ? ['StreamDeviceContext.getSafeResolution','SessionHandler.getWindowResolution'] : [],
       exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
       controlModel:'PERSISTENT_AUTO_APPLY',
-      telemetryIntegrityModel:'RC7_RC6_INPUT_EVIDENCE_PLUS_IMMERSIVE_GAME_MODE',
+      telemetryIntegrityModel:'RC8_MOUSE_TRANSPORT_DISCOVERY_PLUS_RC7_IMMERSIVE_GAME_MODE',
       legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
       longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls',
       telemetryIntegrity:{
@@ -5004,6 +5331,17 @@ function buildExport() {
         keyboardLockCodes:[...IMMERSIVE_KEY_CODES],
         syntheticRemoteInput:false,
         mouseTransportOverride:false
+      },
+      mouseTransportDiscovery:{
+        probeOnDemand:true,
+        pageContextHooksInstalledAtDocumentStart:true,
+        hooks:['RTCDataChannel.prototype.send','WebSocket.prototype.send'],
+        hooksArePassThrough:true,
+        correlationOnlyWhenArmed:true,
+        correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS,
+        rawPayloadCapture:false,
+        payloadMutation:false,
+        syntheticRemoteInput:false
       },
       immersiveGameMode:{
         userTriggered:true,
@@ -5143,6 +5481,7 @@ function updateUI(sample = null) {
   setText('bcs-simple-status',simpleStatus);
 
   const P=S.inputProbe;
+  const M=S.mouseTransport;
   const I=S.immersive;
   setText('bcs-immersive-state',I.entering ? 'ENTRANDO' : (I.exiting ? 'SAINDO' : (I.active ? 'ATIVO' : 'OFF')));
   setText('bcs-input-probe-state',P.enabled ? 'ON' : 'OFF');
@@ -5152,9 +5491,16 @@ function updateUI(sample = null) {
   setText('bcs-input-pointerlock',document.pointerLockElement ? (I.pointerLockOwned ? 'SIM • RC7' : 'SIM') : 'NÃO');
   setText('bcs-input-last',inputProbeEventSummaryLabel(P.lastEvent));
   setText('bcs-input-counts',`${P.counters.keydown}/${P.counters.mousedown}/${P.counters.pointerdown}`);
+  setText('bcs-mouse-transport-state',M.enabled ? 'ON' : 'OFF');
+  setText('bcs-mouse-transport-hooks',`${M.pageObserver.rtcDataChannelHook?'RTC':'-'} / ${M.pageObserver.webSocketHook?'WS':'-'}`);
+  setText('bcs-mouse-transport-counts',`${M.counters.correlatedSends}/${M.counters.multiButtonCorrelatedSends}`);
+  const mtAnalysis=buildMouseTransportAnalysis(M.events.toArray());
+  setText('bcs-mouse-transport-result',mtAnalysis.classification);
   setText('bcs-immersive-error',I.lastError ? `${I.lastError.stage}: ${I.lastError.error}` : '--');
   const probeBtn=$('bcs-input-probe-toggle');
   if (probeBtn) probeBtn.textContent=P.enabled ? 'PARAR PROBE' : 'INICIAR PROBE';
+  const mouseTransportBtn=$('bcs-mouse-transport-toggle');
+  if (mouseTransportBtn) mouseTransportBtn.textContent=M.enabled ? 'PARAR MOUSE TESTE' : 'INICIAR MOUSE TESTE';
   const immersiveBtn=$('bcs-immersive-toggle');
   if (immersiveBtn) {
     immersiveBtn.disabled=I.entering || I.exiting || !IS_STREAM_DOCUMENT;
@@ -5223,7 +5569,7 @@ html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display
   </div>
 
   <div class="bcs-card" id="bcs-input-card">
-    <div class="bcs-st">IMMERSIVE GAME MODE • RC7</div>
+    <div class="bcs-st">IMMERSIVE GAME MODE • RC7 (PRESERVADO)</div>
     <div class="bcs-row"><span>Modo</span><b id="bcs-immersive-state">OFF</b></div>
     <div class="bcs-row"><span>Fullscreen / Pointer Lock</span><b><span id="bcs-input-fullscreen">--</span> / <span id="bcs-input-pointerlock">--</span></b></div>
     <div class="bcs-row"><span>Keyboard Lock API</span><b id="bcs-input-keyboard-lock-cap">--</b></div>
@@ -5236,7 +5582,14 @@ html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display
     <div class="bcs-row"><span>Key↓ / Mouse↓ / Pointer↓</span><b id="bcs-input-counts">0/0/0</b></div>
     <div class="bcs-row"><span>Último evento</span><b id="bcs-input-last">--</b></div>
     <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-input-probe-toggle" class="bcs-btn">INICIAR PROBE</button></div>
-    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC7 não cria KeyboardEvent/MouseEvent sintético e não substitui o transporte remoto.</div>
+    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC8 não cria KeyboardEvent/MouseEvent/PointerEvent sintético.</div>
+    <div class="bcs-st">RC8 • MOUSE TRANSPORT DISCOVERY</div>
+    <div class="bcs-row"><span>Teste</span><b id="bcs-mouse-transport-state">OFF</b></div>
+    <div class="bcs-row"><span>Hooks RTC / WS</span><b id="bcs-mouse-transport-hooks">- / -</b></div>
+    <div class="bcs-row"><span>Sends correl. / multi</span><b id="bcs-mouse-transport-counts">0/0</b></div>
+    <div class="bcs-row"><span>Diagnóstico</span><b id="bcs-mouse-transport-result">INCONCLUSIVE</b></div>
+    <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-mouse-transport-toggle" class="bcs-btn bcs-primary">INICIAR MOUSE TESTE</button></div>
+    <div class="bcs-note">Com o mouse parado: LMB x3 → RMB x3 → segure RMB e LMB x3 → segure LMB e RMB x3. O RC8 observa apenas metadados de sends próximos aos cliques; não lê nem altera o payload.</div>
   </div>
 
   <div class="bcs-card" id="bcs-analyzer-card">
@@ -5331,6 +5684,7 @@ html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display
   $('bcs-safe').addEventListener('click', disarmResolutionControl);
   $('bcs-deep-toggle')?.addEventListener('click', () => setDeepAnalyzerEnabled(!S.deep.enabled,'UI'));
   $('bcs-input-probe-toggle')?.addEventListener('click', () => setInputProbeEnabled(!S.inputProbe.enabled,'UI'));
+  $('bcs-mouse-transport-toggle')?.addEventListener('click', () => setMouseTransportProbeEnabled(!S.mouseTransport.enabled,'UI'));
   $('bcs-immersive-toggle')?.addEventListener('click', async () => {
     if (S.immersive.active || S.immersive.entering) await exitImmersiveMode('USER_UI');
     else await enterImmersiveMode('USER_UI');
@@ -5358,16 +5712,18 @@ function waitForBody() {
 }
 
 function boot() {
+  installMouseTransportObserverPage();
   installPageBridge();
   addEvent('SUITE_BOOT',{
     version:VERSION,
     build:BUILD,
-    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC7_IMMERSIVE_GAME_MODE',
+    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC8_MOUSE_TRANSPORT_DISCOVERY__RC7_IMMERSIVE_GAME_MODE',
     controlModel:'PERSISTENT_AUTO_APPLY',
     profileEnabled:isAutoEnabled(),
     bootBehavior:isAutoEnabled() ? 'AUTO_APPLY_ENABLED' : 'SAFE',
     environment:{browser:ENV.browser,likelyPlatform:ENV.likelyPlatform},
     inputCompatibility:{probeEnabled:false,keyboardLock:CAP.input.keyboardLock,pointerEvents:CAP.input.pointer,pointerLock:CAP.input.pointerLock},
+    mouseTransportDiscovery:{enabled:false,observationalOnly:true,passThroughHooks:true,rawPayloadCapture:false,payloadMutation:false,correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS},
     immersiveGameMode:{enabled:false,userTriggered:true,fullscreen:CAP.display.fullscreen,keyboardLock:CAP.input.keyboardLock,pointerLock:CAP.input.pointerLock,exitChord:IMMERSIVE_EXIT_CHORD_LABEL}
   });
   if (isAutoEnabled()) {
