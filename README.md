@@ -8,48 +8,37 @@ Canal público de distribuição do **Boosteroid Control Suite (BCS)** para inst
 
 `https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js`
 
-Abra essa URL no navegador em que o Tampermonkey está instalado e confirme **Instalar/Atualizar**. Depois da instalação, o próprio userscript usa esta mesma URL em `@updateURL` e `@downloadURL`.
+Abra essa URL no navegador em que o Tampermonkey está instalado e confirme **Instalar/Atualizar**. Depois, recarregue completamente a página do Boosteroid.
 
 ## Beta publicada
 
-- runtime: `v0.8.1-rc13 — Native Handler Call Shape Discovery + Immersive Game Mode + Telemetry Integrity`;
-- status: `STATIC PASS / TARGETED HANDLER-SHAPE OBSERVER SMOKE PASS / LAB-B LIVE PENDING / NOT CANONICAL`;
-- engineering SHA-256: `db3f20e4a2670fcde301482fbb99565fd13252ae327b078b0751be61575eead2`;
-- public distribution SHA-256: `81ad091122482aa9f3622d5d6a0a4ca0eb3171033bca5fc5b27dbcafd5f26605`.
+- runtime: `v0.8.1-rc14 — Chorded Mouse Compatibility Fix + Immersive Game Mode + Telemetry Integrity`;
+- status: `STATIC PASS / TARGETED CHORDED-REROUTE + DUAL-TRANSPORT SMOKE PASS / LAB-B LIVE PENDING / NOT CANONICAL`;
+- engineering SHA-256: `b10096ce24a4a18e70f383cdb79d4f1679bb4bc5c56a7eb10eec04d20311332e`;
+- public distribution SHA-256: `3d58116015c211242d9962be95ac9610a43c197cb239537f73deedaae06d9410`.
 
-O SHA público difere da build de engenharia somente pelos metadados públicos `@homepageURL`, `@updateURL` e `@downloadURL`.
+## O que muda na RC14
 
-## O que muda na RC13
+O snapshot completo do cliente web confirmou a causa de H-014C: no caminho mobile, o cliente Boosteroid suprime compatibility `mousedown/mouseup` por 500 ms após Pointer mouse activity. Em uma interação chorded, o segundo botão pode existir somente como `mousedown/up`, sem um novo `pointerdown/up`, fazendo o cliente descartar o único edge do segundo botão.
 
-A RC12 LIVE confirmou `sendMouseButtonEvent(event, pressedStatus)` e os handlers do VIDEO (`getMouseButtonEvent` para mouse clássico e `handlePointerMouseButtonEvent` para Pointer Events), mas não fechou receiver, call-shape e guards.
+A RC14 corrige somente quatro transições reais LMB/RMB simultâneas e as reroteia para o **handler de botão nativo do próprio Boosteroid** antes da serialização. O cliente continua responsável por `sendMouseButtonEvent`, geração de `id_cmd`, ordenação e transporte duplo WebSocket + WebRTC.
 
-A RC13 continua **observacional** e:
-- analisa os handlers já registrados via `Function.prototype.toString()` somente em memória;
-- exporta apenas call-shapes sanitizados, receiver, arg count, guard token-shapes e hashes;
-- procura uma referência de `sendMouseButtonEvent` no VIDEO e na cadeia de protótipos sem invocá-la;
-- mantém o observador pass-through do `ClientDataChannel` para confirmar o pipeline nativo;
-- não exporta source bruto;
-- não altera payload, não cria envio adicional e não sintetiza input.
+A RC14:
+- não fabrica `id_cmd`;
+- não cria payload de mouse manualmente;
+- não substitui `mouse/move`;
+- não injeta `send()` independente;
+- não despacha `MouseEvent`/`PointerEvent` sintético;
+- mantém o fix desligado por padrão e com gate manual;
+- observa apenas metadata `mouse/button` enquanto o gate está ativo para confirmar WebSocket + ClientDataChannel com o mesmo `id_cmd`.
 
-## Gate LIVE RC13
+## Gate LIVE RC14
 
-`INICIAR SHAPE TESTE → ENTRAR IMERSIVO → LMB normal x2 → RMB normal x2 → aguardar ~2 s → SAIR → PARAR SHAPE TESTE → BAIXAR LOG`.
+`ATIVAR FIX LMB+RMB → ENTRAR IMERSIVO → segurar RMB + clicar LMB normalmente por 20–30 s → testar sentido inverso se útil → SAIR → BAIXAR LOG`.
 
-**Não testar LMB+RMB simultâneo intencionalmente nesta build.** O objetivo é descobrir receiver/args/guards/ref do caminho nativo que já funciona.
+PASS exige comportamento remoto confiável e sincronizado, junto com `NATIVE_DUAL_TRANSPORT_CONFIRMED` e pares WebSocket/RTC usando o mesmo `id_cmd`.
 
-O teste encerra automaticamente após 30 segundos.
-
-## Invariantes
-
-- Stream Control permanece congelado;
-- Page Bridge/Stream Control, RTC Processing, Long Session e Immersive RC7 permanecem byte-identical à RC12;
-- continua um único `getStats()` por sample;
-- zero hook de `RTCPeerConnection.prototype`;
-- zero `MouseEvent`/`PointerEvent`/`KeyboardEvent` sintético;
-- zero payload replacement;
-- zero `send()` adicional;
-- callbacks de listener não são wrapped;
-- RC13 é beta diagnóstica e **não canônica** até Gate LIVE.
+Até o Gate LIVE: **RC14 não é canônica e H-014C ainda não está marcado como corrigido.**
 
 ## Privacidade
 
