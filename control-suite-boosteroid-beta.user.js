@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc11
-// @description  H-014C native mouse sender discovery: captures sanitized JavaScript call stacks for working native mouse/button sends on ClientDataChannel; observational-only, preserving RC7 Immersive Mode and frozen Stream Control.
+// @version      0.8.1-rc12
+// @description  H-014C native sender reference/arguments discovery: observes pointer listener registrations, native mouse/button call stacks and sanitized sender call shape; no input mutation.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc11';
-const BUILD = 'Native Mouse Sender Discovery + Immersive Game Mode + Telemetry Integrity - RC11';
+const VERSION = '0.8.1-rc12';
+const BUILD = 'Native Sender Reference & Arguments Discovery + Immersive Game Mode + Telemetry Integrity - RC12';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -33,8 +33,8 @@ const INPUT_PROBE_AUTO_STOP_MS = 2 * 60 * 1000;
 const MAX_MOUSE_TRANSPORT_EVENTS = 512;
 const MOUSE_TRANSPORT_AUTO_STOP_MS = 30 * 1000;
 const MOUSE_TRANSPORT_CORRELATION_MS = 120;
-const MOUSE_TRANSPORT_CONTROL_EVENT = '__BCS_RC11_NATIVE_SENDER_CONTROL__';
-const MOUSE_TRANSPORT_OBS_EVENT = '__BCS_RC11_NATIVE_SENDER_OBS__';
+const MOUSE_TRANSPORT_CONTROL_EVENT = '__BCS_RC12_NATIVE_SENDER_REF_CONTROL__';
+const MOUSE_TRANSPORT_OBS_EVENT = '__BCS_RC12_NATIVE_SENDER_REF_OBS__';
 const IMMERSIVE_KEY_CODES = Object.freeze(['Escape','Tab']);
 const IMMERSIVE_EXIT_CHORD = Object.freeze({ code:'Escape', ctrlKey:true, altKey:true, shiftKey:true });
 const IMMERSIVE_EXIT_CHORD_LABEL = 'Ctrl+Alt+Shift+Esc';
@@ -299,7 +299,7 @@ const IMPORTANT_EVENT_TYPES = new Set([
   'LONG_SESSION_CHECKPOINT_ERROR','LONG_SESSION_PERSISTENCE_ERROR','LONG_SESSION_PERSISTENCE_PRUNE_ERROR',
   'LONG_SESSION_PERSISTENCE_RECOVERED','LONG_SESSION_PERSISTENCE_UNAVAILABLE',
   'INPUT_PROBE_START','INPUT_PROBE_STOP','INPUT_KEYBOARD_LOCK_CHANGE','INPUT_KEYBOARD_LOCK_ERROR',
-  'MOUSE_SENDER_DISCOVERY_START','MOUSE_SENDER_DISCOVERY_STOP',
+  'MOUSE_SENDER_REFERENCE_DISCOVERY_START','MOUSE_SENDER_REFERENCE_DISCOVERY_STOP',
   'IMMERSIVE_ENTER','IMMERSIVE_EXIT','IMMERSIVE_FULLSCREEN_CHANGE','IMMERSIVE_POINTER_LOCK_CHANGE','IMMERSIVE_LOCK_ERROR'
 ]);
 
@@ -499,12 +499,17 @@ const S = {
       singleButtonMouseDowns:0,multiButtonMouseDowns:0,
       transportSends:0,rtcDataChannelSends:0,clientDataChannelSends:0,
       correlatedSends:0,buttonPackets:0,movePackets:0,
-      buttonStacksCaptured:0,moveStacksCaptured:0,stackParseErrors:0,transportErrors:0
+      buttonStacksCaptured:0,moveStacksCaptured:0,stackParseErrors:0,transportErrors:0,
+      pointerListenerRegistrations:0,pointerHandlerCandidates:0,sourceInspections:0,
+      senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0
     },
     pageObserver: {
-      installed:false,rtcDataChannelHook:false,clientDataChannelSeen:false,
+      installed:false,rtcDataChannelHook:false,addEventListenerHook:false,clientDataChannelSeen:false,
       pageSendCount:0,pageCorrelatedCount:0,buttonPackets:0,movePackets:0,
-      buttonStacksCaptured:0,moveStacksCaptured:0,lastState:null
+      buttonStacksCaptured:0,moveStacksCaptured:0,pointerListenerRegistrations:0,
+      pointerHandlerCandidates:0,sourceInspections:0,senderDefinitionsFound:0,
+      senderCallShapesFound:0,globalSenderRefsFound:0,lastState:null,
+      listenerCandidates:[],sourceFindings:[],globalSenderRefs:[]
     }
   },
   immersive: {
@@ -1124,14 +1129,16 @@ function inputProbeSnapshot() {
 
 
 // -----------------------------------------------------------------------------
-// NATIVE MOUSE SENDER DISCOVERY - RC11 / H-014C
-// RC9 proved the native ClientDataChannel mouse-button payload semantics.
-// RC10 proved that delayed mouse/move replacement is not a reliable fix LIVE.
-// RC11 therefore returns to observational-only instrumentation. While manually
-// armed it captures a bounded, sanitized JavaScript call stack exactly when a
-// WORKING native mouse/button packet reaches ClientDataChannel.send(). A small
-// move-stack sample is captured only for caller comparison. No payload mutation,
-// replay, synthetic input or additional transport send occurs.
+// NATIVE SENDER REFERENCE & ARGUMENTS DISCOVERY - RC12 / H-014C
+// RC11 LIVE identified the working native button pipeline:
+//   handlePointerMouseButtonEvent -> sendMouseButtonEvent -> sendRttEvent ->
+//   sendEvents -> sendMessage -> sendDataChannelMessage -> RTCDataChannel.send.
+// RC12 stays observational-only. At document-start it pass-through observes
+// pointer listener registrations without wrapping listener callbacks, retains
+// callable references only in page memory, captures the already-proven native
+// button stacks, performs a bounded global-reference scan, and inspects the
+// same-origin catch-events.js source only enough to derive sanitized function
+// signatures / call-argument shapes. No raw source or payload is exported.
 // -----------------------------------------------------------------------------
 function pushMouseTransportEvent(type, data = {}, force = false) {
   const M=S.mouseTransport;
@@ -1150,11 +1157,16 @@ function resetMouseTransportTelemetry() {
     singleButtonMouseDowns:0,multiButtonMouseDowns:0,
     transportSends:0,rtcDataChannelSends:0,clientDataChannelSends:0,
     correlatedSends:0,buttonPackets:0,movePackets:0,
-    buttonStacksCaptured:0,moveStacksCaptured:0,stackParseErrors:0,transportErrors:0
+    buttonStacksCaptured:0,moveStacksCaptured:0,stackParseErrors:0,transportErrors:0,
+    pointerListenerRegistrations:0,pointerHandlerCandidates:0,sourceInspections:0,
+    senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0
   };
   Object.assign(M.pageObserver,{
     pageSendCount:0,pageCorrelatedCount:0,clientDataChannelSeen:false,
-    buttonPackets:0,movePackets:0,buttonStacksCaptured:0,moveStacksCaptured:0,lastState:null
+    buttonPackets:0,movePackets:0,buttonStacksCaptured:0,moveStacksCaptured:0,
+    pointerListenerRegistrations:0,pointerHandlerCandidates:0,sourceInspections:0,
+    senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0,
+    listenerCandidates:[],sourceFindings:[],globalSenderRefs:[],lastState:null
   });
 }
 
@@ -1200,21 +1212,42 @@ function noteMouseTransportDomEvent(type, view) {
   dispatchMouseTransportControl({action:'MARK',mark:record,correlationMs:MOUSE_TRANSPORT_CORRELATION_MS});
 }
 
+function syncMouseObserverState(detail) {
+  const M=S.mouseTransport;
+  M.pageObserver.installed=detail.installed===true;
+  M.pageObserver.rtcDataChannelHook=detail.hooks?.rtcDataChannel===true;
+  M.pageObserver.addEventListenerHook=detail.hooks?.addEventListener===true;
+  M.pageObserver.clientDataChannelSeen=detail.clientDataChannelSeen===true;
+  M.pageObserver.lastState=detail.kind;
+  const map={
+    totalSends:'pageSendCount',correlatedSends:'pageCorrelatedCount',
+    buttonPackets:'buttonPackets',movePackets:'movePackets',
+    buttonStacksCaptured:'buttonStacksCaptured',moveStacksCaptured:'moveStacksCaptured',
+    pointerListenerRegistrations:'pointerListenerRegistrations',
+    pointerHandlerCandidates:'pointerHandlerCandidates',
+    sourceInspections:'sourceInspections',senderDefinitionsFound:'senderDefinitionsFound',
+    senderCallShapesFound:'senderCallShapesFound',globalSenderRefsFound:'globalSenderRefsFound'
+  };
+  for (const [k,v] of Object.entries(map)) if (Number.isFinite(detail[k])) M.pageObserver[v]=detail[k];
+  if (Array.isArray(detail.listenerCandidates)) M.pageObserver.listenerCandidates=detail.listenerCandidates.slice(0,24);
+  if (Array.isArray(detail.sourceFindings)) M.pageObserver.sourceFindings=detail.sourceFindings.slice(0,12);
+  if (Array.isArray(detail.globalSenderRefs)) M.pageObserver.globalSenderRefs=detail.globalSenderRefs.slice(0,12);
+}
+
 function onMouseTransportObservation(e) {
   const detail=e?.detail;
-  if (!detail || detail.schemaVersion!==4) return;
+  if (!detail || detail.schemaVersion!==5) return;
   const M=S.mouseTransport;
-  if (detail.kind==='READY' || detail.kind==='STATE') {
-    M.pageObserver.installed=detail.installed===true;
-    M.pageObserver.rtcDataChannelHook=detail.hooks?.rtcDataChannel===true;
-    M.pageObserver.clientDataChannelSeen=detail.clientDataChannelSeen===true;
-    M.pageObserver.lastState=detail.kind;
-    for (const k of ['totalSends','correlatedSends','buttonPackets','movePackets','buttonStacksCaptured','moveStacksCaptured']) {
-      if (!Number.isFinite(detail[k])) continue;
-      const map={totalSends:'pageSendCount',correlatedSends:'pageCorrelatedCount',buttonPackets:'buttonPackets',movePackets:'movePackets',buttonStacksCaptured:'buttonStacksCaptured',moveStacksCaptured:'moveStacksCaptured'};
-      M.pageObserver[map[k]]=detail[k];
-    }
-    pushMouseTransportEvent('PAGE_OBSERVER_'+detail.kind,{hooks:detail.hooks||null,clientDataChannelSeen:M.pageObserver.clientDataChannelSeen,totalSends:detail.totalSends??null,buttonPackets:detail.buttonPackets??null,buttonStacksCaptured:detail.buttonStacksCaptured??null},true);
+  if (detail.kind==='READY' || detail.kind==='STATE' || detail.kind==='DISCOVERY') {
+    syncMouseObserverState(detail);
+    pushMouseTransportEvent('PAGE_OBSERVER_'+detail.kind,{
+      hooks:detail.hooks||null,clientDataChannelSeen:M.pageObserver.clientDataChannelSeen,
+      totalSends:detail.totalSends??null,buttonPackets:detail.buttonPackets??null,
+      buttonStacksCaptured:detail.buttonStacksCaptured??null,
+      pointerListenerRegistrations:detail.pointerListenerRegistrations??null,
+      pointerHandlerCandidates:detail.pointerHandlerCandidates??null,
+      sourceFindings:detail.sourceFindings||null,globalSenderRefs:detail.globalSenderRefs||null
+    },true);
     updateUI(); return;
   }
   if (!M.enabled || detail.kind!=='SEND') return;
@@ -1244,22 +1277,26 @@ function installMouseTransportObserverPage() {
   const source = String.raw`
 (() => {
   'use strict';
-  if (window.__BCS_RC11_NATIVE_SENDER_OBSERVER__) return;
-  window.__BCS_RC11_NATIVE_SENDER_OBSERVER__=true;
+  if (window.__BCS_RC12_NATIVE_SENDER_REF_OBSERVER__) return;
+  window.__BCS_RC12_NATIVE_SENDER_REF_OBSERVER__=true;
   const CTRL='${MOUSE_TRANSPORT_CONTROL_EVENT}';
   const OBS='${MOUSE_TRANSPORT_OBS_EVENT}';
+  const TARGET_NAMES=['sendMouseButtonEvent','handlePointerMouseButtonEvent','sendRttEvent','sendEvents','sendMessage'];
   const state={
     active:false,installed:false,seq:0,lastDom:null,correlationMs:${MOUSE_TRANSPORT_CORRELATION_MS},
-    totalSends:0,correlatedSends:0,clientDataChannelSeen:false,hooks:{rtcDataChannel:false},
+    totalSends:0,correlatedSends:0,clientDataChannelSeen:false,
+    hooks:{rtcDataChannel:false,addEventListener:false},
     buttonPackets:0,movePackets:0,buttonStacksCaptured:0,moveStacksCaptured:0,
-    maxButtonStacks:32,maxMoveStacks:8
+    maxButtonStacks:32,maxMoveStacks:8,
+    pointerListenerRegistrations:0,pointerHandlerCandidates:0,
+    sourceInspections:0,senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0,
+    listenerCandidates:[],listenerRefs:[],sourceFindings:[],globalSenderRefs:[],globalRefObjects:[]
   };
   function fnvText(text){ let h=2166136261>>>0,s=String(text); for(let i=0;i<s.length;i++){ const c=s.charCodeAt(i); h^=c&255; h=Math.imul(h,16777619)>>>0; h^=(c>>>8)&255; h=Math.imul(h,16777619)>>>0; } return 'fnv1a32:'+('00000000'+h.toString(16)).slice(-8); }
   function parseJson(data){ if(typeof data!=='string') return null; try { const v=JSON.parse(data); return v&&typeof v==='object'&&!Array.isArray(v)?v:null; } catch { return null; } }
   function safeSource(raw){
-    const v=String(raw||'');
-    if(!v) return null;
-    if(v.includes('bcs-rc11-native-sender-discovery.js')) return 'bcs-rc11-native-sender-discovery.js';
+    const v=String(raw||''); if(!v) return null;
+    if(v.includes('bcs-rc12-native-sender-reference.js')) return 'bcs-rc12-native-sender-reference.js';
     try { const u=new URL(v); if(u.protocol==='http:'||u.protocol==='https:') return u.origin+u.pathname; if(u.protocol==='blob:') return 'blob:'+u.origin; return u.protocol; } catch {}
     return v.slice(0,180);
   }
@@ -1271,20 +1308,66 @@ function installMouseTransportObserverPage() {
   }
   function captureStack(){
     try {
-      const raw=String(new Error('BCS_RC11_NATIVE_SENDER').stack||'');
-      const frames=raw.split('\n').slice(1).map(parseFrame).filter(Boolean).slice(0,14);
-      const external=frames.filter(f=>!String(f.source||'').includes('bcs-rc11-native-sender-discovery.js')).slice(0,8);
+      const raw=String(new Error('BCS_RC12_NATIVE_SENDER_REF').stack||'');
+      const frames=raw.split('\n').slice(1).map(parseFrame).filter(Boolean).slice(0,16);
+      const external=frames.filter(f=>!String(f.source||'').includes('bcs-rc12-native-sender-reference.js')).slice(0,10);
       const caller=external[0]||null;
       return {captured:true,fingerprint:fnvText(JSON.stringify(external)),caller,frames:external,parseError:false};
     } catch(e) { return {captured:false,fingerprint:null,caller:null,frames:[],parseError:true,error:String(e?.message||e).slice(0,100)}; }
   }
+  function targetLabel(target){
+    try {
+      if(target===window) return 'WINDOW'; if(target===document) return 'DOCUMENT';
+      const tag=String(target?.tagName||target?.constructor?.name||'OBJECT').toUpperCase();
+      return tag.slice(0,80);
+    } catch { return 'OBJECT'; }
+  }
+  function functionMeta(fn){
+    if(typeof fn!=='function') return null;
+    let raw=''; try { raw=Function.prototype.toString.call(fn); } catch {}
+    const compact=raw.replace(/\s+/g,' ');
+    const paramMatch=compact.match(/^[^(]*\(([^)]*)\)/) || compact.match(/^\s*([^=()]+?)\s*=>/);
+    const params=paramMatch ? String(paramMatch[1]||'').split(',').map(v=>v.trim()).filter(Boolean).slice(0,8) : [];
+    return {
+      functionName:fn.name||null,argCount:Number.isFinite(fn.length)?fn.length:null,
+      sourceHash:fnvText(raw),sourceLength:raw.length,params,
+      containsSendMouseButtonEvent:raw.includes('sendMouseButtonEvent'),
+      containsPointerdown:raw.includes('pointerdown'),containsPointerup:raw.includes('pointerup'),
+      containsButtonToken:/\bbutton\b/.test(raw)
+    };
+  }
+  function observeAddEventListener(){
+    const proto=globalThis.EventTarget?.prototype; if(!proto||typeof proto.addEventListener!=='function') return false;
+    const current=proto.addEventListener; if(current?.__bcsRc12SenderRefObserver===true) return true;
+    const original=current;
+    const wrapped=function(type,listener,options){
+      try {
+        const t=String(type||'').toLowerCase();
+        if((t==='pointerdown'||t==='pointerup'||t==='mousedown'||t==='mouseup') && (typeof listener==='function'||typeof listener?.handleEvent==='function')){
+          state.pointerListenerRegistrations++;
+          const fn=typeof listener==='function'?listener:listener.handleEvent;
+          const meta=functionMeta(fn);
+          const candidate=!!meta && (meta.functionName==='handlePointerMouseButtonEvent'||meta.containsSendMouseButtonEvent||/pointer.*mouse.*button/i.test(meta.functionName||''));
+          if(candidate){
+            state.pointerHandlerCandidates++;
+            const item={id:'L'+(state.listenerCandidates.length+1),eventType:t,target:targetLabel(this),capture:options===true||options?.capture===true,meta};
+            state.listenerCandidates.push(item); if(state.listenerCandidates.length>24) state.listenerCandidates.shift();
+            state.listenerRefs.push({id:item.id,eventType:t,target:this,listener,fn}); if(state.listenerRefs.length>24) state.listenerRefs.shift();
+          }
+        }
+      } catch {}
+      return Reflect.apply(original,this,arguments);
+    };
+    try { Object.defineProperty(wrapped,'__bcsRc12SenderRefObserver',{value:true}); Object.defineProperty(wrapped,'__bcsOriginal',{value:original}); } catch {}
+    try { proto.addEventListener=wrapped; return proto.addEventListener===wrapped||proto.addEventListener?.__bcsRc12SenderRefObserver===true; } catch { return false; }
+  }
   function correlation(nowMs){ const m=state.lastDom; if(!m) return null; const delta=nowMs-Number(m.perfNowMs); if(!Number.isFinite(delta)||delta<0||delta>state.correlationMs) return null; return {mark:m,deltaMs:delta}; }
-  function emit(detail){ try { document.dispatchEvent(new CustomEvent(OBS,{detail:Object.assign({schemaVersion:4},detail)})); } catch {} }
+  function emit(detail){ try { document.dispatchEvent(new CustomEvent(OBS,{detail:Object.assign({schemaVersion:5},detail)})); } catch {} }
   function isButton(v){ return v?.type==='mouse'&&v?.action==='button'&&(v?.btn===0||v?.btn===2)&&typeof v?.isPressed==='boolean'; }
   function isMove(v){ return v?.type==='mouse'&&v?.action==='move'; }
   function wrapRtc(){
     const proto=globalThis.RTCDataChannel?.prototype; if(!proto||typeof proto.send!=='function') return false;
-    const current=proto.send; if(current&&current.__bcsRc11NativeSenderDiscovery===true) return true;
+    const current=proto.send; if(current&&current.__bcsRc12NativeSenderReference===true) return true;
     const original=current;
     const wrapped=function(data){
       if(!state.active) return Reflect.apply(original,this,arguments);
@@ -1311,24 +1394,117 @@ function installMouseTransportObserverPage() {
         throw err;
       }
     };
-    try { Object.defineProperty(wrapped,'__bcsRc11NativeSenderDiscovery',{value:true}); Object.defineProperty(wrapped,'__bcsRc11Original',{value:original}); } catch {}
-    try { proto.send=wrapped; return proto.send===wrapped||proto.send?.__bcsRc11NativeSenderDiscovery===true; } catch { return false; }
+    try { Object.defineProperty(wrapped,'__bcsRc12NativeSenderReference',{value:true}); Object.defineProperty(wrapped,'__bcsOriginal',{value:original}); } catch {}
+    try { proto.send=wrapped; return proto.send===wrapped||proto.send?.__bcsRc12NativeSenderReference===true; } catch { return false; }
   }
-  function ensureHooks(){ try { state.hooks.rtcDataChannel=wrapRtc()||state.hooks.rtcDataChannel; } catch {} state.installed=state.hooks.rtcDataChannel; }
-  function view(active){ return {kind:'STATE',installed:state.installed,hooks:{...state.hooks},active:!!active,totalSends:state.totalSends,correlatedSends:state.correlatedSends,clientDataChannelSeen:state.clientDataChannelSeen,buttonPackets:state.buttonPackets,movePackets:state.movePackets,buttonStacksCaptured:state.buttonStacksCaptured,moveStacksCaptured:state.moveStacksCaptured}; }
+  function splitArgs(text){
+    const out=[]; let cur='',depth=0,quote=null,esc=false;
+    for(const ch of String(text||'')){
+      if(quote){ cur+=ch; if(esc){esc=false;continue;} if(ch==='\\'){esc=true;continue;} if(ch===quote) quote=null; continue; }
+      if(ch==='"'||ch==="'"){quote=ch;cur+=ch;continue;}
+      if(ch==='('||ch==='['||ch==='{'){depth++;cur+=ch;continue;}
+      if(ch===')'||ch===']'||ch==='}'){depth=Math.max(0,depth-1);cur+=ch;continue;}
+      if(ch===','&&depth===0){out.push(cur.trim());cur='';continue;} cur+=ch;
+    }
+    if(cur.trim()) out.push(cur.trim()); return out.slice(0,8);
+  }
+  function argShape(expr){
+    const s=String(expr||'').trim(); const ids=[...new Set((s.match(/[A-Za-z_$][\w$]*/g)||[]).slice(0,20))];
+    const literals=[]; for(const m of s.matchAll(/["']([^"']{0,40})["']/g)){ if(['pointerdown','pointerup','mousedown','mouseup','mouse','button'].includes(m[1])) literals.push(m[1]); }
+    return {length:s.length,hash:fnvText(s),identifiers:ids,literals:[...new Set(literals)]};
+  }
+  function callShapeFromSegment(segment,name){
+    const s=String(segment||''); let from=0;
+    while(true){
+      const idx=s.indexOf(name+'(',from); if(idx<0) return null;
+      let i=idx+name.length+1,depth=1,quote=null,esc=false;
+      for(;i<s.length;i++){
+        const ch=s[i];
+        if(quote){ if(esc){esc=false;continue;} if(ch==='\\'){esc=true;continue;} if(ch===quote) quote=null; continue; }
+        if(ch==='"'||ch==="'"){quote=ch;continue;}
+        if(ch==='(') depth++; else if(ch===')'){depth--; if(depth===0){ const argsText=s.slice(idx+name.length+1,i); const args=splitArgs(argsText); return {callee:name,argCount:args.length,args:args.map(argShape)}; }}
+      }
+      from=idx+name.length;
+    }
+  }
+  function parameterListNear(text,name){
+    const s=String(text||''); const re=new RegExp('(?:function\\s+)?'+name+'\\s*[:=]?\\s*(?:function\\s*)?\\(([^)]*)\\)','m');
+    const m=s.match(re); if(m) return String(m[1]||'').split(',').map(v=>v.trim()).filter(Boolean).slice(0,10);
+    const m2=s.match(new RegExp(name+'\\s*\\(([^)]*)\\)\\s*\\{','m')); return m2?String(m2[1]||'').split(',').map(v=>v.trim()).filter(Boolean).slice(0,10):[];
+  }
+  async function inspectCatchEventsSource(){
+    state.sourceInspections++;
+    const finding={source:location.origin+'/static/streaming/catch-events.js',fetched:false,bytes:null,hash:null,definitions:[],handlerCallShape:null,error:null};
+    try {
+      const res=await fetch('/static/streaming/catch-events.js',{credentials:'same-origin',cache:'no-store'});
+      if(!res.ok) throw new Error('HTTP_'+res.status);
+      const txt=await res.text(); finding.fetched=true; finding.bytes=txt.length; finding.hash=fnvText(txt);
+      for(const name of ['sendMouseButtonEvent','handlePointerMouseButtonEvent','sendRttEvent','_sendBatchedMouseMove']){
+        const idx=txt.indexOf(name); if(idx<0) continue;
+        const line=txt.slice(0,idx).split('\n').length;
+        const segment=txt.slice(Math.max(0,idx-240),Math.min(txt.length,idx+2600));
+        const params=parameterListNear(segment,name);
+        const def={name,line,params,paramCount:params.length,segmentHash:fnvText(segment)};
+        finding.definitions.push(def);
+        if(name==='sendMouseButtonEvent') state.senderDefinitionsFound++;
+        if(name==='handlePointerMouseButtonEvent'){
+          const handlerBodyWindow=txt.slice(idx+name.length,Math.min(txt.length,idx+name.length+2600));
+          const shape=callShapeFromSegment(handlerBodyWindow,'sendMouseButtonEvent');
+          if(shape){ finding.handlerCallShape=shape; state.senderCallShapesFound++; }
+        }
+      }
+    } catch(e){ finding.error=String(e?.message||e).slice(0,120); }
+    state.sourceFindings=[finding];
+    emit(discoveryView());
+  }
+  function scanGlobals(){
+    const found=[]; const seen=new WeakSet(); const roots=[{path:'window',value:window}];
+    let inspected=0;
+    for(let ri=0;ri<roots.length&&ri<300;ri++){
+      const {path,value}=roots[ri]; if(!value||(typeof value!=='object'&&typeof value!=='function')) continue;
+      if(seen.has(value)) continue; seen.add(value);
+      let keys=[]; try { keys=Object.getOwnPropertyNames(value).slice(0,500); } catch { continue; }
+      for(const key of keys){
+        if(++inspected>6000) break;
+        let v; try { v=value[key]; } catch { continue; }
+        const p=path+'.'+key;
+        if(typeof v==='function'){
+          const meta=functionMeta(v);
+          if(TARGET_NAMES.includes(key)||TARGET_NAMES.includes(meta?.functionName||'')){
+            found.push({path:p,key,meta}); state.globalRefObjects.push({path:p,fn:v,owner:value,key});
+            if(found.length>=12) break;
+          }
+        } else if(ri<40 && v && typeof v==='object' && !(v instanceof Node) && v!==window && v!==document){
+          roots.push({path:p,value:v});
+        }
+      }
+      if(inspected>6000||found.length>=12) break;
+    }
+    state.globalSenderRefs=found; state.globalSenderRefsFound=found.filter(x=>x.key==='sendMouseButtonEvent'||x.meta?.functionName==='sendMouseButtonEvent').length;
+    emit(discoveryView());
+  }
+  function ensureHooks(){
+    try { state.hooks.addEventListener=observeAddEventListener()||state.hooks.addEventListener; } catch {}
+    try { state.hooks.rtcDataChannel=wrapRtc()||state.hooks.rtcDataChannel; } catch {}
+    state.installed=state.hooks.rtcDataChannel&&state.hooks.addEventListener;
+  }
+  function discoveryView(){
+    return {kind:'DISCOVERY',installed:state.installed,hooks:{...state.hooks},active:state.active,totalSends:state.totalSends,correlatedSends:state.correlatedSends,clientDataChannelSeen:state.clientDataChannelSeen,buttonPackets:state.buttonPackets,movePackets:state.movePackets,buttonStacksCaptured:state.buttonStacksCaptured,moveStacksCaptured:state.moveStacksCaptured,pointerListenerRegistrations:state.pointerListenerRegistrations,pointerHandlerCandidates:state.pointerHandlerCandidates,sourceInspections:state.sourceInspections,senderDefinitionsFound:state.senderDefinitionsFound,senderCallShapesFound:state.senderCallShapesFound,globalSenderRefsFound:state.globalSenderRefsFound,listenerCandidates:state.listenerCandidates.slice(-24),sourceFindings:state.sourceFindings.slice(-12),globalSenderRefs:state.globalSenderRefs.slice(-12)};
+  }
+  function stateView(active){ const v=discoveryView(); v.kind='STATE'; v.active=!!active; return v; }
   ensureHooks();
   document.addEventListener(CTRL,e=>{
     const d=e?.detail||{};
     if(d.action==='START'){
-      ensureHooks(); state.active=true; state.seq=0; state.lastDom=null; state.totalSends=0; state.correlatedSends=0; state.clientDataChannelSeen=false; state.buttonPackets=0; state.movePackets=0; state.buttonStacksCaptured=0; state.moveStacksCaptured=0; state.correlationMs=Number(d.correlationMs)||state.correlationMs; emit(view(true)); return;
+      ensureHooks(); state.active=true; state.seq=0; state.lastDom=null; state.totalSends=0; state.correlatedSends=0; state.clientDataChannelSeen=false; state.buttonPackets=0; state.movePackets=0; state.buttonStacksCaptured=0; state.moveStacksCaptured=0; state.sourceInspections=0; state.senderDefinitionsFound=0; state.senderCallShapesFound=0; state.globalSenderRefsFound=0; state.sourceFindings=[]; state.globalSenderRefs=[]; state.globalRefObjects=[]; state.correlationMs=Number(d.correlationMs)||state.correlationMs; emit(stateView(true)); queueMicrotask(()=>{scanGlobals(); void inspectCatchEventsSource();}); return;
     }
     if(d.action==='MARK'&&state.active){ state.lastDom=d.mark||null; state.correlationMs=Number(d.correlationMs)||state.correlationMs; return; }
-    if(d.action==='STOP'){ state.active=false; emit(view(false)); state.lastDom=null; return; }
-    if(d.action==='STATE') emit(view(state.active));
+    if(d.action==='STOP'){ state.active=false; emit(stateView(false)); state.lastDom=null; return; }
+    if(d.action==='STATE') emit(stateView(state.active));
   },true);
-  emit({kind:'READY',installed:state.installed,hooks:{...state.hooks},active:false,totalSends:0,correlatedSends:0,clientDataChannelSeen:false,buttonPackets:0,movePackets:0,buttonStacksCaptured:0,moveStacksCaptured:0});
+  emit(Object.assign({kind:'READY'},discoveryView(),{kind:'READY',active:false}));
 })();
-//# sourceURL=bcs-rc11-native-sender-discovery.js`;
+//# sourceURL=bcs-rc12-native-sender-reference.js`;
   try {
     const sc=document.createElement('script'); sc.textContent=source;
     (document.documentElement || document.head || document).appendChild(sc); sc.remove();
@@ -1340,20 +1516,20 @@ function setMouseTransportProbeEnabled(enabled, reason='UI') {
   if (enabled) {
     resetMouseTransportTelemetry(); M.enabled=true; M.startedAtSec=round(elapsed(),3); M.stoppedAtSec=null;
     M.inputProbeOwned=!S.inputProbe.enabled;
-    if (M.inputProbeOwned) setInputProbeEnabled(true,'RC11_NATIVE_MOUSE_SENDER_DISCOVERY');
+    if (M.inputProbeOwned) setInputProbeEnabled(true,'RC12_NATIVE_SENDER_REFERENCE_DISCOVERY');
     dispatchMouseTransportControl({action:'START',correlationMs:MOUSE_TRANSPORT_CORRELATION_MS});
     if (M.autoStopTimer) clearTimeout(M.autoStopTimer);
     M.autoStopTimer=setTimeout(()=>setMouseTransportProbeEnabled(false,'AUTO_TIMEOUT'),MOUSE_TRANSPORT_AUTO_STOP_MS);
-    pushMouseTransportEvent('MOUSE_SENDER_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS},true);
-    addEvent('MOUSE_SENDER_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS});
+    pushMouseTransportEvent('MOUSE_SENDER_REFERENCE_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS},true);
+    addEvent('MOUSE_SENDER_REFERENCE_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS});
   } else {
     dispatchMouseTransportControl({action:'STOP'});
-    pushMouseTransportEvent('MOUSE_SENDER_DISCOVERY_STOP',{reason},true);
+    pushMouseTransportEvent('MOUSE_SENDER_REFERENCE_DISCOVERY_STOP',{reason},true);
     M.enabled=false; M.stoppedAtSec=round(elapsed(),3);
     if (M.autoStopTimer) { clearTimeout(M.autoStopTimer); M.autoStopTimer=null; }
-    if (M.inputProbeOwned && S.inputProbe.enabled) setInputProbeEnabled(false,'RC11_NATIVE_MOUSE_SENDER_DISCOVERY_STOP');
+    if (M.inputProbeOwned && S.inputProbe.enabled) setInputProbeEnabled(false,'RC12_NATIVE_SENDER_REFERENCE_DISCOVERY_STOP');
     M.inputProbeOwned=false;
-    addEvent('MOUSE_SENDER_DISCOVERY_STOP',{reason,eventCount:M.events.count,buttonStacksCaptured:M.counters.buttonStacksCaptured});
+    addEvent('MOUSE_SENDER_REFERENCE_DISCOVERY_STOP',{reason,eventCount:M.events.count,buttonStacksCaptured:M.counters.buttonStacksCaptured});
   }
   updateUI();
 }
@@ -1363,52 +1539,58 @@ function buildMouseTransportAnalysis(events) {
   const moves=events.filter(e=>e.type==='NATIVE_MOUSE_MOVE_SEND'&&e.ok!==false);
   const required=['LMB_DOWN_SINGLE','LMB_UP_SINGLE','RMB_DOWN_SINGLE','RMB_UP_SINGLE'];
   const present=[...new Set(buttons.map(e=>e.case).filter(c=>required.includes(c)))];
-  function candidateMap(list){
-    const map={};
-    for(const e of list){
-      const st=e.stack; if(!st?.captured) continue;
-      const c=st.caller||null;
-      const key=c ? `${c.functionName||'<anonymous>'}|${c.source||'<unknown>'}|${c.line??'?' }|${c.column??'?'}` : `STACK:${st.fingerprint||'UNKNOWN'}`;
-      const g=map[key]||(map[key]={count:0,cases:{},caller:c,stackFingerprint:st.fingerprint||null,frames:st.frames||[]});
-      g.count++; const k=e.case||'UNKNOWN'; g.cases[k]=(g.cases[k]||0)+1;
+  function findFrame(name){
+    for(const e of buttons){
+      const f=e.stack?.frames?.find(x=>x.functionName===name||String(x.functionName||'').endsWith('.'+name));
+      if(f) return f;
     }
-    return map;
+    return null;
   }
-  const buttonCandidates=candidateMap(buttons), moveCandidates=candidateMap(moves);
-  const buttonCandidateValues=Object.values(buttonCandidates).sort((a,b)=>b.count-a.count);
+  const nativeButtonFrame=findFrame('sendMouseButtonEvent');
+  const nativeHandlerFrame=findFrame('handlePointerMouseButtonEvent');
+  const sourceFinding=S.mouseTransport.pageObserver.sourceFindings?.find(x=>x?.fetched)||null;
+  const callShape=sourceFinding?.handlerCallShape||null;
+  const listenerCandidates=S.mouseTransport.pageObserver.listenerCandidates||[];
+  const directRefs=S.mouseTransport.pageObserver.globalSenderRefs||[];
   let classification='INCONCLUSIVE';
-  if(!S.mouseTransport.pageObserver.installed) classification='RTC_DATA_CHANNEL_HOOK_UNAVAILABLE';
+  if(!S.mouseTransport.pageObserver.installed) classification='OBSERVATION_HOOKS_UNAVAILABLE';
   else if(!buttons.length) classification='NO_NATIVE_MOUSE_BUTTON_PACKETS_CAPTURED';
-  else if(S.mouseTransport.counters.buttonStacksCaptured===0) classification='BUTTON_PACKETS_SEEN__STACK_CAPTURE_FAILED';
-  else if(buttonCandidateValues.some(v=>v.caller?.source)) classification='NATIVE_BUTTON_CALLER_CANDIDATES_CAPTURED';
-  else classification='BUTTON_STACK_CAPTURED__CALLER_UNRESOLVED';
+  else if(!nativeButtonFrame) classification='BUTTON_STACK_CAPTURED__SEND_MOUSE_BUTTON_FRAME_MISSING';
+  else if(sourceFinding?.fetched && callShape) classification='NATIVE_SENDER_SIGNATURE_AND_CALL_SHAPE_CAPTURED';
+  else if(sourceFinding?.error) classification='NATIVE_BUTTON_PIPELINE_CONFIRMED__SOURCE_INSPECTION_FAILED';
+  else classification='NATIVE_BUTTON_PIPELINE_CONFIRMED__ARGUMENT_SHAPE_PENDING';
   return {
     classification,requiredCases:required,presentCases:present,completeRequiredCases:required.every(c=>present.includes(c)),
     buttonPacketCount:buttons.length,moveSampleCount:moves.length,
     buttonStacksCaptured:S.mouseTransport.counters.buttonStacksCaptured,moveStacksCaptured:S.mouseTransport.counters.moveStacksCaptured,
-    senderCandidates:buttonCandidateValues.slice(0,12),moveCallerCandidates:Object.values(moveCandidates).sort((a,b)=>b.count-a.count).slice(0,8),
+    nativeFrames:{sendMouseButtonEvent:nativeButtonFrame,handlePointerMouseButtonEvent:nativeHandlerFrame},
+    pointerListenerCandidates:listenerCandidates,
+    directGlobalSenderRefs:directRefs,
+    sourceInspection:sourceFinding,
+    senderCallShape:callShape,
     protocolEvidence:{type:'mouse',action:'button',buttonField:'btn',pressedField:'isPressed',leftButton:0,rightButton:2},
-    privacy:'No raw payload, cookies, tokens or request query strings are stored. Stack URLs are reduced to origin+pathname; only function/file/line/column metadata is retained.',
-    caveat:'RC11 is observational only. A captured caller frame is a sender candidate until the referenced Boosteroid bundle/function is inspected and verified.'
+    privacy:'No raw payload or raw Boosteroid source is exported. Function references remain page-memory only. Export contains names, file/line/column, hashes, parameter names and sanitized call-argument token shapes.',
+    caveat:'RC12 is observational only. Capturing a listener reference or call shape does not authorize invocation; LIVE fix remains deferred until the exact native entry point and arguments are verified.'
   };
 }
 
 function mouseTransportSnapshot() {
   const M=S.mouseTransport,events=M.events.toArray();
   return {
-    schemaVersion:4,mode:'H014C_NATIVE_MOUSE_SENDER_DISCOVERY',enabled:M.enabled,
+    schemaVersion:5,mode:'H014C_NATIVE_SENDER_REFERENCE_ARGUMENTS_DISCOVERY',enabled:M.enabled,
     observationalOnly:true,manualDiagnosticGate:true,clientDataChannelOnly:true,
-    rawPayloadCapture:false,payloadMutation:false,newTransportSendInjection:false,
+    rawPayloadCapture:false,rawSourceCapture:false,payloadMutation:false,newTransportSendInjection:false,
     syntheticMouseEvents:false,syntheticPointerEvents:false,stackCapture:true,
-    stackPrivacy:'BOOSTEROID_SCRIPT_PATH_FUNCTION_LINE_COLUMN__QUERY_HASH_STRIPPED',
+    listenerRegistrationObservation:true,listenerInvocationWrapping:false,
+    functionReferencesExported:false,sameOriginSourceInspection:true,
+    stackPrivacy:'BOOSTEROID_SCRIPT_PATH_FUNCTION_LINE_COLUMN__QUERY_STRIPPED',
     correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS,maxEvents:MAX_MOUSE_TRANSPORT_EVENTS,
     autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS,retainedEvents:M.events.count,
     overwrittenEvents:Math.max(0,M.events.total-M.events.count),startedAtSec:M.startedAtSec,stoppedAtSec:M.stoppedAtSec,
     counters:{...M.counters},pageObserver:{...M.pageObserver},analysis:buildMouseTransportAnalysis(events),
-    testProtocol:['enter immersive / pointer lock','start SENDER TESTE','LMB normal x3','RMB normal x3','stop SENDER TESTE','export JSON'],events
+    testProtocol:['start REF TESTE before immersive','enter immersive / pointer lock','LMB normal x2','RMB normal x2','wait 2s for source inspection','stop REF TESTE','export JSON'],events
   };
 }
-
 
 // -----------------------------------------------------------------------------
 // IMMERSIVE GAME MODE - RC7 (PRESERVED IN RC8)
@@ -5149,7 +5331,7 @@ function buildExport() {
       name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
       pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
       schemaVersion:2,
-      status:'V0.8.1_RC11__NATIVE_MOUSE_SENDER_DISCOVERY__NOT_CANONICAL'
+      status:'V0.8.1_RC12__NATIVE_SENDER_REFERENCE_ARGUMENTS_DISCOVERY__NOT_CANONICAL'
     },
     exportedAt:new Date().toISOString(),
     environment:ENV,
@@ -5303,7 +5485,7 @@ function buildExport() {
       pageMethodOverrides:S.control.state==='ACTIVE' && (S.control.application?.patch?.patched||S.control.application?.patched) ? ['StreamDeviceContext.getSafeResolution','SessionHandler.getWindowResolution'] : [],
       exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
       controlModel:'PERSISTENT_AUTO_APPLY',
-      telemetryIntegrityModel:'RC11_NATIVE_MOUSE_SENDER_DISCOVERY_PLUS_RC9_PAYLOAD_MAPPING_PLUS_RC7_IMMERSIVE_GAME_MODE',
+      telemetryIntegrityModel:'RC12_NATIVE_SENDER_REFERENCE_ARGUMENTS_PLUS_RC11_PIPELINE_PLUS_RC7_IMMERSIVE_GAME_MODE',
       legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
       longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls',
       telemetryIntegrity:{
@@ -5490,14 +5672,14 @@ function updateUI(sample = null) {
   setText('bcs-input-counts',`${P.counters.keydown}/${P.counters.mousedown}/${P.counters.pointerdown}`);
   setText('bcs-mouse-transport-state',M.enabled ? 'ON' : 'OFF');
   setText('bcs-mouse-transport-hooks',`${M.pageObserver.rtcDataChannelHook?'RTC':'-'} / ${M.pageObserver.clientDataChannelSeen?'CLIENT':'-'}`);
-  setText('bcs-mouse-transport-counts',`${M.counters.buttonStacksCaptured}/${M.counters.moveStacksCaptured}`);
+  setText('bcs-mouse-transport-counts',`${M.counters.buttonStacksCaptured}/${M.pageObserver.pointerHandlerCandidates||0}`);
   const mtAnalysis=buildMouseTransportAnalysis(M.events.toArray());
   setText('bcs-mouse-transport-result',mtAnalysis.classification);
   setText('bcs-immersive-error',I.lastError ? `${I.lastError.stage}: ${I.lastError.error}` : '--');
   const probeBtn=$('bcs-input-probe-toggle');
   if (probeBtn) probeBtn.textContent=P.enabled ? 'PARAR PROBE' : 'INICIAR PROBE';
   const mouseTransportBtn=$('bcs-mouse-transport-toggle');
-  if (mouseTransportBtn) mouseTransportBtn.textContent=M.enabled ? 'PARAR SENDER TESTE' : 'INICIAR SENDER TESTE';
+  if (mouseTransportBtn) mouseTransportBtn.textContent=M.enabled ? 'PARAR REF TESTE' : 'INICIAR REF TESTE';
   const immersiveBtn=$('bcs-immersive-toggle');
   if (immersiveBtn) {
     immersiveBtn.disabled=I.entering || I.exiting || !IS_STREAM_DOCUMENT;
@@ -5579,14 +5761,14 @@ html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display
     <div class="bcs-row"><span>Key↓ / Mouse↓ / Pointer↓</span><b id="bcs-input-counts">0/0/0</b></div>
     <div class="bcs-row"><span>Último evento</span><b id="bcs-input-last">--</b></div>
     <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-input-probe-toggle" class="bcs-btn">INICIAR PROBE</button></div>
-    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC11 não cria KeyboardEvent/MouseEvent/PointerEvent sintético.</div>
-    <div class="bcs-st">RC11 • NATIVE MOUSE SENDER DISCOVERY</div>
-    <div class="bcs-row"><span>Sender teste</span><b id="bcs-mouse-transport-state">OFF</b></div>
+    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC12 não cria KeyboardEvent/MouseEvent/PointerEvent sintético.</div>
+    <div class="bcs-st">RC12 • NATIVE SENDER REF + ARGS</div>
+    <div class="bcs-row"><span>Ref teste</span><b id="bcs-mouse-transport-state">OFF</b></div>
     <div class="bcs-row"><span>Hook / canal</span><b id="bcs-mouse-transport-hooks">- / -</b></div>
-    <div class="bcs-row"><span>Stacks botão / move</span><b id="bcs-mouse-transport-counts">0/0</b></div>
+    <div class="bcs-row"><span>Stacks / handler refs</span><b id="bcs-mouse-transport-counts">0/0</b></div>
     <div class="bcs-row"><span>Diagnóstico</span><b id="bcs-mouse-transport-result">INCONCLUSIVE</b></div>
-    <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-mouse-transport-toggle" class="bcs-btn bcs-primary">INICIAR SENDER TESTE</button></div>
-    <div class="bcs-note">OBSERVACIONAL: com Pointer Lock ativo, faça somente LMB normal x3 e RMB normal x3, com pouco movimento. RC11 registra call stacks sanitizadas dos pacotes mouse/button nativos que já funcionam; não altera nem reenvia input.</div>
+    <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-mouse-transport-toggle" class="bcs-btn bcs-primary">INICIAR REF TESTE</button></div>
+    <div class="bcs-note">OBSERVACIONAL: inicie REF TESTE antes do modo imersivo; depois faça LMB normal x2 e RMB normal x2. RC12 observa registros de listeners, stack nativa e assinatura/call-shape sanitizada; não chama nem altera o sender.</div>
   </div>
 
   <div class="bcs-card" id="bcs-analyzer-card">
@@ -5714,13 +5896,13 @@ function boot() {
   addEvent('SUITE_BOOT',{
     version:VERSION,
     build:BUILD,
-    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC11_NATIVE_MOUSE_SENDER_DISCOVERY__RC7_IMMERSIVE_GAME_MODE',
+    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC12_NATIVE_SENDER_REFERENCE_ARGUMENTS_DISCOVERY__RC7_IMMERSIVE_GAME_MODE',
     controlModel:'PERSISTENT_AUTO_APPLY',
     profileEnabled:isAutoEnabled(),
     bootBehavior:isAutoEnabled() ? 'AUTO_APPLY_ENABLED' : 'SAFE',
     environment:{browser:ENV.browser,likelyPlatform:ENV.likelyPlatform},
     inputCompatibility:{probeEnabled:false,keyboardLock:CAP.input.keyboardLock,pointerEvents:CAP.input.pointer,pointerLock:CAP.input.pointerLock},
-    mouseNativeSenderDiscovery:{enabled:false,observationalOnly:true,manualDiagnosticGate:true,clientDataChannelOnly:true,rawPayloadCapture:false,payloadMutation:false,newTransportSendInjection:false,syntheticMouseEvents:false,syntheticPointerEvents:false,stackCapture:true,correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS},
+    mouseNativeSenderDiscovery:{enabled:false,observationalOnly:true,manualDiagnosticGate:true,clientDataChannelOnly:true,rawPayloadCapture:false,rawSourceCapture:false,payloadMutation:false,newTransportSendInjection:false,syntheticMouseEvents:false,syntheticPointerEvents:false,stackCapture:true,listenerRegistrationObservation:true,sameOriginSourceInspection:true,functionReferencesExported:false,correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS},
     immersiveGameMode:{enabled:false,userTriggered:true,fullscreen:CAP.display.fullscreen,keyboardLock:CAP.input.keyboardLock,pointerLock:CAP.input.pointerLock,exitChord:IMMERSIVE_EXIT_CHORD_LABEL}
   });
   if (isAutoEnabled()) {
