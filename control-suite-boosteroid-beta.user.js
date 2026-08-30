@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc10
-// @description  Experimental H-014C multi-button reconciliation: selectively converts one native mouse/move packet into the missing native mouse/button transition while preserving native id_cmd ordering; preserves RC7 Immersive Mode and frozen Stream Control.
+// @version      0.8.1-rc11
+// @description  H-014C native mouse sender discovery: captures sanitized JavaScript call stacks for working native mouse/button sends on ClientDataChannel; observational-only, preserving RC7 Immersive Mode and frozen Stream Control.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc10';
-const BUILD = 'Minimal Multi-Button Reconciliation + Immersive Game Mode + Telemetry Integrity - RC10';
+const VERSION = '0.8.1-rc11';
+const BUILD = 'Native Mouse Sender Discovery + Immersive Game Mode + Telemetry Integrity - RC11';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -31,10 +31,10 @@ const MAX_IMPORTANT_EVENTS = 640;
 const MAX_INPUT_PROBE_EVENTS = 512;
 const INPUT_PROBE_AUTO_STOP_MS = 2 * 60 * 1000;
 const MAX_MOUSE_TRANSPORT_EVENTS = 512;
-const MOUSE_TRANSPORT_AUTO_STOP_MS = 60 * 1000;
+const MOUSE_TRANSPORT_AUTO_STOP_MS = 30 * 1000;
 const MOUSE_TRANSPORT_CORRELATION_MS = 120;
-const MOUSE_TRANSPORT_CONTROL_EVENT = '__BCS_RC10_MOUSE_RECONCILE_CONTROL__';
-const MOUSE_TRANSPORT_OBS_EVENT = '__BCS_RC10_MOUSE_RECONCILE_OBS__';
+const MOUSE_TRANSPORT_CONTROL_EVENT = '__BCS_RC11_NATIVE_SENDER_CONTROL__';
+const MOUSE_TRANSPORT_OBS_EVENT = '__BCS_RC11_NATIVE_SENDER_OBS__';
 const IMMERSIVE_KEY_CODES = Object.freeze(['Escape','Tab']);
 const IMMERSIVE_EXIT_CHORD = Object.freeze({ code:'Escape', ctrlKey:true, altKey:true, shiftKey:true });
 const IMMERSIVE_EXIT_CHORD_LABEL = 'Ctrl+Alt+Shift+Esc';
@@ -299,7 +299,7 @@ const IMPORTANT_EVENT_TYPES = new Set([
   'LONG_SESSION_CHECKPOINT_ERROR','LONG_SESSION_PERSISTENCE_ERROR','LONG_SESSION_PERSISTENCE_PRUNE_ERROR',
   'LONG_SESSION_PERSISTENCE_RECOVERED','LONG_SESSION_PERSISTENCE_UNAVAILABLE',
   'INPUT_PROBE_START','INPUT_PROBE_STOP','INPUT_KEYBOARD_LOCK_CHANGE','INPUT_KEYBOARD_LOCK_ERROR',
-  'MOUSE_RECONCILIATION_START','MOUSE_RECONCILIATION_STOP',
+  'MOUSE_SENDER_DISCOVERY_START','MOUSE_SENDER_DISCOVERY_STOP',
   'IMMERSIVE_ENTER','IMMERSIVE_EXIT','IMMERSIVE_FULLSCREEN_CHANGE','IMMERSIVE_POINTER_LOCK_CHANGE','IMMERSIVE_LOCK_ERROR'
 ]);
 
@@ -498,16 +498,13 @@ const S = {
       domEvents:0,pointerdown:0,pointerup:0,mousedown:0,mouseup:0,
       singleButtonMouseDowns:0,multiButtonMouseDowns:0,
       transportSends:0,rtcDataChannelSends:0,clientDataChannelSends:0,
-      correlatedSends:0,multiButtonCorrelatedSends:0,
-      payloadJsonParsed:0,payloadNonJson:0,payloadSemanticErrors:0,transportErrors:0,
-      correctionCandidates:0,correctionsApplied:0,downCorrections:0,upCorrections:0,
-      nativeEquivalentSeen:0,buttonTemplatesSeen:0,skippedNoTemplate:0,skippedNoIdCmd:0,
-      expiredCorrections:0,stopBlockedButtonsHeld:0
+      correlatedSends:0,buttonPackets:0,movePackets:0,
+      buttonStacksCaptured:0,moveStacksCaptured:0,stackParseErrors:0,transportErrors:0
     },
     pageObserver: {
-      installed:false,rtcDataChannelHook:false,clientDataChannelSeen:false,buttonTemplateSeen:false,
-      pageSendCount:0,pageCorrelatedCount:0,totalCorrections:0,nativeEquivalentCount:0,
-      skippedNoTemplate:0,skippedNoIdCmd:0,expiredCorrections:0,lastState:null
+      installed:false,rtcDataChannelHook:false,clientDataChannelSeen:false,
+      pageSendCount:0,pageCorrelatedCount:0,buttonPackets:0,movePackets:0,
+      buttonStacksCaptured:0,moveStacksCaptured:0,lastState:null
     }
   },
   immersive: {
@@ -1127,24 +1124,14 @@ function inputProbeSnapshot() {
 
 
 // -----------------------------------------------------------------------------
-// MINIMAL MULTI-BUTTON RECONCILIATION - RC10 / H-014C
-// RC9 proved the ClientDataChannel protocol for native button transitions:
-//   {type:"mouse", action:"button", isPressed:<bool>, btn:<0|2>, id_cmd, from_udp}
-// and proved that second-button DOM transitions while another mouse button is
-// held correlate only with mouse/move packets instead of mouse/button packets.
-//
-// RC10 is an explicit, manual, experimental compatibility test. It does NOT
-// synthesize DOM MouseEvent/PointerEvent, does NOT add a second DataChannel
-// send, and does NOT invent id_cmd values. While armed, the page-context hook:
-//   1) learns a native mouse/button packet template in memory from ordinary
-//      single-button clicks;
-//   2) marks only the four proven missing simultaneous transitions;
-//   3) if Boosteroid emits the expected native button command, leaves it alone;
-//   4) otherwise converts the first correlated native mouse/move packet into
-//      the missing mouse/button packet, reusing that replaced packet's id_cmd
-//      and from_udp plus the captured native button template shape.
-// Raw payloads/templates are never exported. Outside FIX TESTE the wrapper is
-// pass-through. Stream Control / Page Bridge / RTC measurement remain frozen.
+// NATIVE MOUSE SENDER DISCOVERY - RC11 / H-014C
+// RC9 proved the native ClientDataChannel mouse-button payload semantics.
+// RC10 proved that delayed mouse/move replacement is not a reliable fix LIVE.
+// RC11 therefore returns to observational-only instrumentation. While manually
+// armed it captures a bounded, sanitized JavaScript call stack exactly when a
+// WORKING native mouse/button packet reaches ClientDataChannel.send(). A small
+// move-stack sample is captured only for caller comparison. No payload mutation,
+// replay, synthetic input or additional transport send occurs.
 // -----------------------------------------------------------------------------
 function pushMouseTransportEvent(type, data = {}, force = false) {
   const M=S.mouseTransport;
@@ -1157,24 +1144,17 @@ function pushMouseTransportEvent(type, data = {}, force = false) {
 
 function resetMouseTransportTelemetry() {
   const M=S.mouseTransport;
-  M.events.clear();
-  M.lastEvent=null;
-  M.lastDomEvent=null;
-  M.domSeq=0;
+  M.events.clear(); M.lastEvent=null; M.lastDomEvent=null; M.domSeq=0;
   M.counters={
     domEvents:0,pointerdown:0,pointerup:0,mousedown:0,mouseup:0,
     singleButtonMouseDowns:0,multiButtonMouseDowns:0,
     transportSends:0,rtcDataChannelSends:0,clientDataChannelSends:0,
-    correlatedSends:0,multiButtonCorrelatedSends:0,
-    payloadJsonParsed:0,payloadNonJson:0,payloadSemanticErrors:0,transportErrors:0,
-    correctionCandidates:0,correctionsApplied:0,downCorrections:0,upCorrections:0,
-    nativeEquivalentSeen:0,buttonTemplatesSeen:0,skippedNoTemplate:0,skippedNoIdCmd:0,
-    expiredCorrections:0,stopBlockedButtonsHeld:0
+    correlatedSends:0,buttonPackets:0,movePackets:0,
+    buttonStacksCaptured:0,moveStacksCaptured:0,stackParseErrors:0,transportErrors:0
   };
   Object.assign(M.pageObserver,{
-    pageSendCount:0,pageCorrelatedCount:0,clientDataChannelSeen:false,buttonTemplateSeen:false,
-    totalCorrections:0,nativeEquivalentCount:0,skippedNoTemplate:0,skippedNoIdCmd:0,
-    expiredCorrections:0,lastState:null
+    pageSendCount:0,pageCorrelatedCount:0,clientDataChannelSeen:false,
+    buttonPackets:0,movePackets:0,buttonStacksCaptured:0,moveStacksCaptured:0,lastState:null
   });
 }
 
@@ -1197,21 +1177,12 @@ function mouseDomCase(record) {
   return `${t||'EVENT'}_B${Number.isFinite(b)?b:'X'}_BS${Number.isFinite(bs)?bs:'X'}`;
 }
 
-function mouseCorrectionForCase(caseName) {
-  if (caseName==='LMB_DOWN_WHILE_RMB') return {btn:0,isPressed:true,direction:'DOWN'};
-  if (caseName==='LMB_UP_WHILE_RMB') return {btn:0,isPressed:false,direction:'UP'};
-  if (caseName==='RMB_DOWN_WHILE_LMB') return {btn:2,isPressed:true,direction:'DOWN'};
-  if (caseName==='RMB_UP_WHILE_LMB') return {btn:2,isPressed:false,direction:'UP'};
-  return null;
-}
-
 function noteMouseTransportDomEvent(type, view) {
   const M=S.mouseTransport;
   if (!M.enabled || !view || view.target?.isBcsUi) return;
   if (!['POINTERDOWN','POINTERUP','MOUSEDOWN','MOUSEUP'].includes(type)) return;
-  const domSeq=++M.domSeq;
   const record={
-    domSeq,domType:type,perfNowMs:round(now(),3),
+    domSeq:++M.domSeq,domType:type,perfNowMs:round(now(),3),
     button:Number.isFinite(view.button)?view.button:null,
     buttons:Number.isFinite(view.buttons)?view.buttons:null,
     multiButtonState:view.multiButtonState===true,
@@ -1219,116 +1190,51 @@ function noteMouseTransportDomEvent(type, view) {
     target:view.target || null
   };
   record.case=mouseDomCase(record);
-  M.lastDomEvent=record;
-  M.counters.domEvents++;
-  const key=type.toLowerCase();
-  if (key in M.counters) M.counters[key]++;
+  M.lastDomEvent=record; M.counters.domEvents++;
+  const key=type.toLowerCase(); if (key in M.counters) M.counters[key]++;
   if (type==='MOUSEDOWN') {
     if (record.multiButtonState || record.otherButtonAlreadyHeld) M.counters.multiButtonMouseDowns++;
     else M.counters.singleButtonMouseDowns++;
   }
-  if (mouseCorrectionForCase(record.case)) M.counters.correctionCandidates++;
   pushMouseTransportEvent('DOM_MOUSE_TRANSITION',record);
   dispatchMouseTransportControl({action:'MARK',mark:record,correlationMs:MOUSE_TRANSPORT_CORRELATION_MS});
 }
 
-function mouseTransportPayloadView(detail) {
-  const d=detail?.payload || {};
-  return {
-    dataType:d.dataType || null,
-    size:Number.isFinite(d.size)?d.size:null,
-    fingerprint:d.fingerprint || null,
-    semantic:d.semantic || null
-  };
-}
-
 function onMouseTransportObservation(e) {
   const detail=e?.detail;
-  if (!detail || detail.schemaVersion!==3) return;
+  if (!detail || detail.schemaVersion!==4) return;
   const M=S.mouseTransport;
   if (detail.kind==='READY' || detail.kind==='STATE') {
     M.pageObserver.installed=detail.installed===true;
     M.pageObserver.rtcDataChannelHook=detail.hooks?.rtcDataChannel===true;
     M.pageObserver.clientDataChannelSeen=detail.clientDataChannelSeen===true;
-    M.pageObserver.buttonTemplateSeen=detail.buttonTemplateSeen===true;
     M.pageObserver.lastState=detail.kind;
-    if (Number.isFinite(detail.totalSends)) M.pageObserver.pageSendCount=detail.totalSends;
-    if (Number.isFinite(detail.correlatedSends)) M.pageObserver.pageCorrelatedCount=detail.correlatedSends;
-    if (Number.isFinite(detail.totalCorrections)) M.pageObserver.totalCorrections=detail.totalCorrections;
-    if (Number.isFinite(detail.nativeEquivalentCount)) M.pageObserver.nativeEquivalentCount=detail.nativeEquivalentCount;
-    if (Number.isFinite(detail.skippedNoTemplate)) M.pageObserver.skippedNoTemplate=detail.skippedNoTemplate;
-    if (Number.isFinite(detail.skippedNoIdCmd)) M.pageObserver.skippedNoIdCmd=detail.skippedNoIdCmd;
-    if (Number.isFinite(detail.expiredCorrections)) M.pageObserver.expiredCorrections=detail.expiredCorrections;
-    pushMouseTransportEvent('PAGE_OBSERVER_'+detail.kind,{
-      hooks:detail.hooks||null,clientDataChannelSeen:M.pageObserver.clientDataChannelSeen,
-      buttonTemplateSeen:M.pageObserver.buttonTemplateSeen,totalSends:detail.totalSends??null,
-      correlatedSends:detail.correlatedSends??null,totalCorrections:detail.totalCorrections??null
-    },true);
-    updateUI();
-    return;
+    for (const k of ['totalSends','correlatedSends','buttonPackets','movePackets','buttonStacksCaptured','moveStacksCaptured']) {
+      if (!Number.isFinite(detail[k])) continue;
+      const map={totalSends:'pageSendCount',correlatedSends:'pageCorrelatedCount',buttonPackets:'buttonPackets',movePackets:'movePackets',buttonStacksCaptured:'buttonStacksCaptured',moveStacksCaptured:'moveStacksCaptured'};
+      M.pageObserver[map[k]]=detail[k];
+    }
+    pushMouseTransportEvent('PAGE_OBSERVER_'+detail.kind,{hooks:detail.hooks||null,clientDataChannelSeen:M.pageObserver.clientDataChannelSeen,totalSends:detail.totalSends??null,buttonPackets:detail.buttonPackets??null,buttonStacksCaptured:detail.buttonStacksCaptured??null},true);
+    updateUI(); return;
   }
-  if (!M.enabled) return;
-  if (detail.kind==='TEMPLATE') {
-    M.counters.buttonTemplatesSeen++;
-    M.pageObserver.buttonTemplateSeen=true;
-    pushMouseTransportEvent('NATIVE_BUTTON_TEMPLATE_SEEN',{btn:detail.btn??null,isPressed:detail.isPressed??null,keyPaths:detail.keyPaths||null});
-    updateUI();
-    return;
-  }
-  if (detail.kind==='NATIVE_EQUIVALENT') {
-    M.counters.nativeEquivalentSeen++;
-    M.pageObserver.nativeEquivalentCount++;
-    pushMouseTransportEvent('NATIVE_EQUIVALENT_BUTTON_SEEN',{case:detail.case||null,btn:detail.btn??null,isPressed:detail.isPressed??null,deltaMs:detail.deltaMs??null});
-    updateUI();
-    return;
-  }
-  if (detail.kind==='SKIP') {
-    if (detail.reason==='NO_NATIVE_BUTTON_TEMPLATE') M.counters.skippedNoTemplate++;
-    else if (detail.reason==='MISSING_NATIVE_ID_CMD') M.counters.skippedNoIdCmd++;
-    else if (detail.reason==='PENDING_EXPIRED') M.counters.expiredCorrections++;
-    pushMouseTransportEvent('RECONCILIATION_SKIP',{reason:detail.reason||'UNKNOWN',case:detail.case||null,deltaMs:detail.deltaMs??null});
-    updateUI();
-    return;
-  }
-  if (detail.kind==='CORRECTION') {
-    M.counters.correctionsApplied++;
-    if (detail.isPressed===true) M.counters.downCorrections++;
-    if (detail.isPressed===false) M.counters.upCorrections++;
-    M.pageObserver.totalCorrections++;
-    pushMouseTransportEvent('MULTI_BUTTON_RECONCILIATION_APPLIED',{
-      case:detail.case||null,btn:detail.btn??null,isPressed:detail.isPressed===true,
-      deltaMs:Number.isFinite(detail.deltaMs)?round(detail.deltaMs,3):null,
-      idCmdSource:detail.idCmdSource||null,templateSource:detail.templateSource||null,
-      replacedAction:detail.replacedAction||null,replacementAction:detail.replacementAction||null,
-      originalPayload:detail.originalPayload||null,correctedPayload:detail.correctedPayload||null
-    },true);
-    updateUI();
-    return;
-  }
-  if (detail.kind!=='SEND') return;
+  if (!M.enabled || detail.kind!=='SEND') return;
   M.counters.transportSends++;
   if (detail.transport==='RTC_DATA_CHANNEL') M.counters.rtcDataChannelSends++;
   if (detail.channel?.label==='ClientDataChannel') M.counters.clientDataChannelSends++;
   if (detail.ok===false) M.counters.transportErrors++;
-  const semantic=detail.payload?.semantic || null;
-  if (semantic?.format==='JSON_STRING') M.counters.payloadJsonParsed++;
-  else if (semantic?.format && semantic.format!=='JSON_STRING') M.counters.payloadNonJson++;
-  if (semantic?.error) M.counters.payloadSemanticErrors++;
+  if (detail.packetKind==='BUTTON') M.counters.buttonPackets++;
+  if (detail.packetKind==='MOVE') M.counters.movePackets++;
+  if (detail.stack?.captured && detail.packetKind==='BUTTON') M.counters.buttonStacksCaptured++;
+  if (detail.stack?.captured && detail.packetKind==='MOVE') M.counters.moveStacksCaptured++;
+  if (detail.stack?.parseError) M.counters.stackParseErrors++;
   const dom=detail.domMark || null;
   const correlated=!!dom && Number.isFinite(detail.deltaMs) && detail.deltaMs>=0 && detail.deltaMs<=MOUSE_TRANSPORT_CORRELATION_MS;
   if (correlated) M.counters.correlatedSends++;
-  if (correlated && mouseCorrectionForCase(dom?.case || mouseDomCase(dom))) M.counters.multiButtonCorrelatedSends++;
-  pushMouseTransportEvent('CLIENT_DATA_CHANNEL_SEND',{
-    transport:detail.transport || null,
-    ok:detail.ok!==false,
+  pushMouseTransportEvent(detail.packetKind==='BUTTON'?'NATIVE_MOUSE_BUTTON_SEND':'NATIVE_MOUSE_MOVE_SEND',{
+    transport:detail.transport||null,ok:detail.ok!==false,packetKind:detail.packetKind||null,
     deltaMs:Number.isFinite(detail.deltaMs)?round(detail.deltaMs,3):null,
-    domMark:dom,
-    case:dom?.case || mouseDomCase(dom),
-    channel:detail.channel || null,
-    payload:mouseTransportPayloadView(detail),
-    originalPayload:detail.originalPayload ? mouseTransportPayloadView({payload:detail.originalPayload}) : null,
-    reconciled:detail.reconciled===true,
-    error:detail.error || null
+    domMark:dom,case:dom?.case||mouseDomCase(dom),channel:detail.channel||null,
+    button:detail.button||null,move:detail.move||null,stack:detail.stack||null,error:detail.error||null
   });
   updateUI();
 }
@@ -1338,162 +1244,91 @@ function installMouseTransportObserverPage() {
   const source = String.raw`
 (() => {
   'use strict';
-  if (window.__BCS_RC10_MOUSE_RECONCILE_OBSERVER__) return;
-  window.__BCS_RC10_MOUSE_RECONCILE_OBSERVER__=true;
+  if (window.__BCS_RC11_NATIVE_SENDER_OBSERVER__) return;
+  window.__BCS_RC11_NATIVE_SENDER_OBSERVER__=true;
   const CTRL='${MOUSE_TRANSPORT_CONTROL_EVENT}';
   const OBS='${MOUSE_TRANSPORT_OBS_EVENT}';
   const state={
-    active:false,installed:false,seq:0,lastDom:null,pending:null,correlationMs:${MOUSE_TRANSPORT_CORRELATION_MS},
+    active:false,installed:false,seq:0,lastDom:null,correlationMs:${MOUSE_TRANSPORT_CORRELATION_MS},
     totalSends:0,correlatedSends:0,clientDataChannelSeen:false,hooks:{rtcDataChannel:false},
-    buttonTemplate:null,buttonTemplateSeen:false,totalCorrections:0,nativeEquivalentCount:0,
-    skippedNoTemplate:0,skippedNoIdCmd:0,expiredCorrections:0
+    buttonPackets:0,movePackets:0,buttonStacksCaptured:0,moveStacksCaptured:0,
+    maxButtonStacks:32,maxMoveStacks:8
   };
-  function fnvStep(h,v){ h^=v&255; return Math.imul(h,16777619)>>>0; }
-  function hashText(text,limit=256){
-    let h=2166136261>>>0; const n=Math.min(String(text).length,limit); const s=String(text);
-    for(let i=0;i<n;i++){ const c=s.charCodeAt(i); h=fnvStep(h,c); h=fnvStep(h,c>>>8); }
-    h=fnvStep(h,s.length); h=fnvStep(h,s.length>>>8); h=fnvStep(h,s.length>>>16); h=fnvStep(h,s.length>>>24);
-    return 'fnv1a32:'+('00000000'+h.toString(16)).slice(-8);
+  function fnvText(text){ let h=2166136261>>>0,s=String(text); for(let i=0;i<s.length;i++){ const c=s.charCodeAt(i); h^=c&255; h=Math.imul(h,16777619)>>>0; h^=(c>>>8)&255; h=Math.imul(h,16777619)>>>0; } return 'fnv1a32:'+('00000000'+h.toString(16)).slice(-8); }
+  function parseJson(data){ if(typeof data!=='string') return null; try { const v=JSON.parse(data); return v&&typeof v==='object'&&!Array.isArray(v)?v:null; } catch { return null; } }
+  function safeSource(raw){
+    const v=String(raw||'');
+    if(!v) return null;
+    if(v.includes('bcs-rc11-native-sender-discovery.js')) return 'bcs-rc11-native-sender-discovery.js';
+    try { const u=new URL(v); if(u.protocol==='http:'||u.protocol==='https:') return u.origin+u.pathname; if(u.protocol==='blob:') return 'blob:'+u.origin; return u.protocol; } catch {}
+    return v.slice(0,180);
   }
-  function payloadMeta(data){
-    let dataType='UNKNOWN',size=null,h=2166136261>>>0;
+  function parseFrame(line){
+    let t=String(line||'').trim(); if(!t.startsWith('at ')) return null; t=t.slice(3);
+    let fn=null,loc=t; const fm=t.match(/^(.*?) \((.*)\)$/); if(fm){ fn=fm[1]||null; loc=fm[2]; }
+    const lm=loc.match(/^(.*):(\d+):(\d+)$/); if(!lm) return {functionName:fn,source:safeSource(loc),line:null,column:null};
+    return {functionName:fn,source:safeSource(lm[1]),line:Number(lm[2]),column:Number(lm[3])};
+  }
+  function captureStack(){
     try {
-      if (typeof data==='string') { dataType='STRING'; size=data.length; const n=Math.min(data.length,64); for(let i=0;i<n;i++){ const c=data.charCodeAt(i); h=fnvStep(h,c); h=fnvStep(h,c>>>8); } }
-      else if (data instanceof ArrayBuffer) { dataType='ARRAY_BUFFER'; size=data.byteLength; const a=new Uint8Array(data,0,Math.min(data.byteLength,64)); for(let i=0;i<a.length;i++) h=fnvStep(h,a[i]); }
-      else if (ArrayBuffer.isView(data)) { dataType=data?.constructor?.name || 'ARRAY_BUFFER_VIEW'; size=data.byteLength; const a=new Uint8Array(data.buffer,data.byteOffset,Math.min(data.byteLength,64)); for(let i=0;i<a.length;i++) h=fnvStep(h,a[i]); }
-      else if (typeof Blob!=='undefined' && data instanceof Blob) { dataType='BLOB'; size=data.size; }
-      else if (data==null) { dataType=String(data).toUpperCase(); size=0; }
-      else { dataType=data?.constructor?.name || typeof data; }
-    } catch {}
-    if (Number.isFinite(size)) { h=fnvStep(h,size); h=fnvStep(h,size>>>8); h=fnvStep(h,size>>>16); h=fnvStep(h,size>>>24); }
-    return {dataType,size,fingerprint:'fnv1a32:'+('00000000'+h.toString(16)).slice(-8)};
-  }
-  function safeStringValue(path,value){
-    const key=String(path||''); const s=String(value);
-    const inputKey=/(?:^|\.)(?:type|event|action|button|buttons|btn|mouse|pointer|input|state|pressed|press|down|up|code|key|kind|name)$/i.test(key) || /mouse|button|pointer|input|press/i.test(key);
-    if(inputKey && s.length<=48 && /^[A-Za-z0-9_.:+-]+$/.test(s)) return {kind:'STRING',value:s};
-    return {kind:'STRING',length:s.length,hash:hashText(s)};
-  }
-  function sanitizedJsonStructure(value){
-    const paths=[],scalars=[]; let truncated=false;
-    function pushPath(p){ if(paths.length<80) paths.push(p); else truncated=true; }
-    function pushScalar(p,v){
-      if(scalars.length>=80){truncated=true;return;}
-      if(v===null){scalars.push({path:p,kind:'NULL'});return;}
-      if(typeof v==='boolean'){scalars.push({path:p,kind:'BOOLEAN',value:v});return;}
-      if(typeof v==='number'){ if(!Number.isFinite(v)){scalars.push({path:p,kind:'NUMBER',value:null});return;} if(Number.isInteger(v)&&Math.abs(v)<=64){scalars.push({path:p,kind:'NUMBER',value:v});return;} scalars.push({path:p,kind:'NUMBER',class:Number.isInteger(v)?'INTEGER':'FLOAT',sign:v===0?0:(v>0?1:-1),hash:hashText(String(v))}); return; }
-      if(typeof v==='string'){scalars.push({path:p,...safeStringValue(p,v)});return;}
-      scalars.push({path:p,kind:typeof v});
-    }
-    function walk(v,p,depth){
-      if(depth>5){truncated=true;return;}
-      if(v===null || typeof v!=='object'){pushScalar(p||'$',v);return;}
-      if(Array.isArray(v)){ pushPath((p||'$')+'[]'); const n=Math.min(v.length,16); for(let i=0;i<n;i++) walk(v[i],(p||'$')+'['+i+']',depth+1); if(v.length>n) truncated=true; return; }
-      const keys=Object.keys(v); const n=Math.min(keys.length,40);
-      for(let i=0;i<n;i++){ const k=keys[i]; const np=p?(p+'.'+k):k; pushPath(np); walk(v[k],np,depth+1); }
-      if(keys.length>n) truncated=true;
-    }
-    walk(value,'',0);
-    return {topType:Array.isArray(value)?'ARRAY':(value===null?'NULL':typeof value==='object'?'OBJECT':typeof value).toUpperCase(),keyPaths:paths,scalars,truncated};
-  }
-  function semanticView(data){
-    if(typeof data!=='string') return {format:'NON_STRING',dataType:data?.constructor?.name||typeof data};
-    try { const parsed=JSON.parse(data); return {format:'JSON_STRING',...sanitizedJsonStructure(parsed)}; }
-    catch(err) { return {format:'TEXT_NON_JSON',length:data.length,hash:hashText(data),error:null}; }
-  }
-  function parseJson(data){ if(typeof data!=='string') return null; try { const v=JSON.parse(data); return v && typeof v==='object' && !Array.isArray(v) ? v : null; } catch { return null; } }
-  function emit(detail){ try { document.dispatchEvent(new CustomEvent(OBS,{detail:Object.assign({schemaVersion:3},detail)})); } catch {} }
-  function correctionForCase(name){
-    if(name==='LMB_DOWN_WHILE_RMB') return {btn:0,isPressed:true};
-    if(name==='LMB_UP_WHILE_RMB') return {btn:0,isPressed:false};
-    if(name==='RMB_DOWN_WHILE_LMB') return {btn:2,isPressed:true};
-    if(name==='RMB_UP_WHILE_LMB') return {btn:2,isPressed:false};
-    return null;
+      const raw=String(new Error('BCS_RC11_NATIVE_SENDER').stack||'');
+      const frames=raw.split('\n').slice(1).map(parseFrame).filter(Boolean).slice(0,14);
+      const external=frames.filter(f=>!String(f.source||'').includes('bcs-rc11-native-sender-discovery.js')).slice(0,8);
+      const caller=external[0]||null;
+      return {captured:true,fingerprint:fnvText(JSON.stringify(external)),caller,frames:external,parseError:false};
+    } catch(e) { return {captured:false,fingerprint:null,caller:null,frames:[],parseError:true,error:String(e?.message||e).slice(0,100)}; }
   }
   function correlation(nowMs){ const m=state.lastDom; if(!m) return null; const delta=nowMs-Number(m.perfNowMs); if(!Number.isFinite(delta)||delta<0||delta>state.correlationMs) return null; return {mark:m,deltaMs:delta}; }
-  function pendingCorrelation(nowMs){
-    const p=state.pending; if(!p) return null;
-    const delta=nowMs-Number(p.mark?.perfNowMs);
-    if(!Number.isFinite(delta)||delta<0||delta>state.correlationMs){ state.expiredCorrections++; emit({kind:'SKIP',reason:'PENDING_EXPIRED',case:p.mark?.case||null,deltaMs:Number.isFinite(delta)?delta:null}); state.pending=null; return null; }
-    return {pending:p,deltaMs:delta};
-  }
-  function isNativeButton(v){ return v?.type==='mouse' && v?.action==='button' && (v?.btn===0 || v?.btn===2) && typeof v?.isPressed==='boolean'; }
-  function isMouseMove(v){ return v?.type==='mouse' && v?.action==='move'; }
-  function captureTemplate(v){
-    if(!isNativeButton(v)) return;
-    state.buttonTemplate=Object.assign({},v);
-    if(!state.buttonTemplateSeen){ state.buttonTemplateSeen=true; emit({kind:'TEMPLATE',btn:v.btn,isPressed:v.isPressed,keyPaths:Object.keys(v).slice(0,20)}); }
-  }
-  function nativeEquivalent(v,p){ return isNativeButton(v) && v.btn===p.correction.btn && v.isPressed===p.correction.isPressed; }
-  function correctedPayload(moveObj,p){
-    if(!state.buttonTemplate){ state.skippedNoTemplate++; emit({kind:'SKIP',reason:'NO_NATIVE_BUTTON_TEMPLATE',case:p.mark?.case||null}); return null; }
-    if(!Object.prototype.hasOwnProperty.call(moveObj,'id_cmd')){ state.skippedNoIdCmd++; emit({kind:'SKIP',reason:'MISSING_NATIVE_ID_CMD',case:p.mark?.case||null}); return null; }
-    const out=Object.assign({},state.buttonTemplate);
-    out.type='mouse'; out.action='button'; out.isPressed=!!p.correction.isPressed; out.btn=p.correction.btn; out.id_cmd=moveObj.id_cmd;
-    if(Object.prototype.hasOwnProperty.call(moveObj,'from_udp')) out.from_udp=moveObj.from_udp;
-    return JSON.stringify(out);
-  }
+  function emit(detail){ try { document.dispatchEvent(new CustomEvent(OBS,{detail:Object.assign({schemaVersion:4},detail)})); } catch {} }
+  function isButton(v){ return v?.type==='mouse'&&v?.action==='button'&&(v?.btn===0||v?.btn===2)&&typeof v?.isPressed==='boolean'; }
+  function isMove(v){ return v?.type==='mouse'&&v?.action==='move'; }
   function wrapRtc(){
-    const proto=globalThis.RTCDataChannel?.prototype; if(!proto || typeof proto.send!=='function') return false;
-    const current=proto.send; if(current && current.__bcsRc10MouseReconcile===true) return true;
+    const proto=globalThis.RTCDataChannel?.prototype; if(!proto||typeof proto.send!=='function') return false;
+    const current=proto.send; if(current&&current.__bcsRc11NativeSenderDiscovery===true) return true;
     const original=current;
     const wrapped=function(data){
       if(!state.active) return Reflect.apply(original,this,arguments);
-      const at=performance.now(); state.totalSends++;
-      const label=this?.label||null; if(label==='ClientDataChannel') state.clientDataChannelSeen=true;
-      const c=correlation(at); const pc=(label==='ClientDataChannel')?pendingCorrelation(at):null;
-      let parsed=(label==='ClientDataChannel')?parseJson(data):null;
-      if(parsed) captureTemplate(parsed);
-      let sendData=data, reconciled=false, originalPayload=null, correctionMeta=null;
-      if(pc && parsed){
-        if(nativeEquivalent(parsed,pc.pending)){
-          state.nativeEquivalentCount++; emit({kind:'NATIVE_EQUIVALENT',case:pc.pending.mark?.case||null,btn:parsed.btn,isPressed:parsed.isPressed,deltaMs:pc.deltaMs}); state.pending=null;
-        } else if(isMouseMove(parsed)){
-          const replacement=correctedPayload(parsed,pc.pending);
-          if(replacement!=null){
-            originalPayload={...payloadMeta(data),semantic:semanticView(data)};
-            sendData=replacement; reconciled=true;
-            correctionMeta={case:pc.pending.mark?.case||null,btn:pc.pending.correction.btn,isPressed:pc.pending.correction.isPressed,deltaMs:pc.deltaMs,idCmdSource:'REPLACED_NATIVE_PACKET',templateSource:'CAPTURED_NATIVE_BUTTON_PACKET',replacedAction:'move',replacementAction:'button'};
-            state.totalCorrections++; state.pending=null;
-          } else state.pending=null;
-        }
+      const label=this?.label||null;
+      if(label!=='ClientDataChannel') return Reflect.apply(original,this,arguments);
+      const at=performance.now(); state.totalSends++; state.clientDataChannelSeen=true;
+      const parsed=parseJson(data); let packetKind='OTHER',button=null,move=null,stack=null;
+      if(isButton(parsed)){
+        packetKind='BUTTON'; state.buttonPackets++;
+        button={btn:parsed.btn,isPressed:parsed.isPressed,from_udp:typeof parsed.from_udp==='boolean'?parsed.from_udp:null,idCmdPresent:Object.prototype.hasOwnProperty.call(parsed,'id_cmd')};
+        if(state.buttonStacksCaptured<state.maxButtonStacks){ stack=captureStack(); if(stack.captured) state.buttonStacksCaptured++; }
+      } else if(isMove(parsed)){
+        packetKind='MOVE'; state.movePackets++;
+        move={from_udp:typeof parsed.from_udp==='boolean'?parsed.from_udp:null,idCmdPresent:Object.prototype.hasOwnProperty.call(parsed,'id_cmd')};
+        if(state.moveStacksCaptured<state.maxMoveStacks){ stack=captureStack(); if(stack.captured) state.moveStacksCaptured++; }
       }
-      const args=Array.from(arguments); args[0]=sendData;
-      let result;
+      const c=correlation(at); if(c) state.correlatedSends++;
       try {
-        result=Reflect.apply(original,this,args);
-        if(reconciled && correctionMeta) emit({kind:'CORRECTION',...correctionMeta,originalPayload,correctedPayload:{...payloadMeta(sendData),semantic:semanticView(sendData)}});
-        if(c && label==='ClientDataChannel'){
-          state.correlatedSends++;
-          emit({kind:'SEND',seq:++state.seq,transport:'RTC_DATA_CHANNEL',ok:true,pagePerfMs:at,deltaMs:c.deltaMs,domMark:c.mark,channel:{label,protocol:this?.protocol||null,id:Number.isFinite(this?.id)?this.id:null,readyState:this?.readyState||null,ordered:typeof this?.ordered==='boolean'?this.ordered:null},payload:{...payloadMeta(sendData),semantic:semanticView(sendData)},originalPayload,reconciled});
-        }
+        const result=Reflect.apply(original,this,arguments);
+        if(packetKind==='BUTTON'||(packetKind==='MOVE'&&stack)) emit({kind:'SEND',seq:++state.seq,transport:'RTC_DATA_CHANNEL',ok:true,pagePerfMs:at,deltaMs:c?.deltaMs??null,domMark:c?.mark??null,packetKind,channel:{label,protocol:this?.protocol||null,id:Number.isFinite(this?.id)?this.id:null,readyState:this?.readyState||null,ordered:typeof this?.ordered==='boolean'?this.ordered:null},button,move,stack});
         return result;
-      } catch(err) {
-        if(c && label==='ClientDataChannel') emit({kind:'SEND',seq:++state.seq,transport:'RTC_DATA_CHANNEL',ok:false,pagePerfMs:at,deltaMs:c.deltaMs,domMark:c.mark,channel:{label},payload:{...payloadMeta(sendData),semantic:semanticView(sendData)},originalPayload,reconciled,error:String(err?.name||err?.message||err).slice(0,120)});
+      } catch(err){
+        if(packetKind==='BUTTON'||(packetKind==='MOVE'&&stack)) emit({kind:'SEND',seq:++state.seq,transport:'RTC_DATA_CHANNEL',ok:false,pagePerfMs:at,deltaMs:c?.deltaMs??null,domMark:c?.mark??null,packetKind,channel:{label},button,move,stack,error:String(err?.name||err?.message||err).slice(0,120)});
         throw err;
       }
     };
-    try { Object.defineProperty(wrapped,'__bcsRc10MouseReconcile',{value:true}); Object.defineProperty(wrapped,'__bcsRc10Original',{value:original}); } catch {}
-    try { proto.send=wrapped; return proto.send===wrapped || proto.send?.__bcsRc10MouseReconcile===true; } catch { return false; }
+    try { Object.defineProperty(wrapped,'__bcsRc11NativeSenderDiscovery',{value:true}); Object.defineProperty(wrapped,'__bcsRc11Original',{value:original}); } catch {}
+    try { proto.send=wrapped; return proto.send===wrapped||proto.send?.__bcsRc11NativeSenderDiscovery===true; } catch { return false; }
   }
-  function ensureHooks(){ try { state.hooks.rtcDataChannel=wrapRtc() || state.hooks.rtcDataChannel; } catch {} state.installed=state.hooks.rtcDataChannel; }
-  function stateView(active){ return {kind:'STATE',installed:state.installed,hooks:{...state.hooks},active:!!active,totalSends:state.totalSends,correlatedSends:state.correlatedSends,clientDataChannelSeen:state.clientDataChannelSeen,buttonTemplateSeen:state.buttonTemplateSeen,totalCorrections:state.totalCorrections,nativeEquivalentCount:state.nativeEquivalentCount,skippedNoTemplate:state.skippedNoTemplate,skippedNoIdCmd:state.skippedNoIdCmd,expiredCorrections:state.expiredCorrections}; }
+  function ensureHooks(){ try { state.hooks.rtcDataChannel=wrapRtc()||state.hooks.rtcDataChannel; } catch {} state.installed=state.hooks.rtcDataChannel; }
+  function view(active){ return {kind:'STATE',installed:state.installed,hooks:{...state.hooks},active:!!active,totalSends:state.totalSends,correlatedSends:state.correlatedSends,clientDataChannelSeen:state.clientDataChannelSeen,buttonPackets:state.buttonPackets,movePackets:state.movePackets,buttonStacksCaptured:state.buttonStacksCaptured,moveStacksCaptured:state.moveStacksCaptured}; }
   ensureHooks();
   document.addEventListener(CTRL,e=>{
     const d=e?.detail||{};
     if(d.action==='START'){
-      ensureHooks(); state.active=true; state.seq=0; state.lastDom=null; state.pending=null; state.totalSends=0; state.correlatedSends=0; state.clientDataChannelSeen=false; state.buttonTemplate=null; state.buttonTemplateSeen=false; state.totalCorrections=0; state.nativeEquivalentCount=0; state.skippedNoTemplate=0; state.skippedNoIdCmd=0; state.expiredCorrections=0; state.correlationMs=Number(d.correlationMs)||state.correlationMs; emit(stateView(true)); return;
+      ensureHooks(); state.active=true; state.seq=0; state.lastDom=null; state.totalSends=0; state.correlatedSends=0; state.clientDataChannelSeen=false; state.buttonPackets=0; state.movePackets=0; state.buttonStacksCaptured=0; state.moveStacksCaptured=0; state.correlationMs=Number(d.correlationMs)||state.correlationMs; emit(view(true)); return;
     }
-    if(d.action==='MARK' && state.active){
-      state.lastDom=d.mark||null; state.correlationMs=Number(d.correlationMs)||state.correlationMs;
-      const corr=correctionForCase(state.lastDom?.case); if(corr) state.pending={mark:state.lastDom,correction:corr};
-      return;
-    }
-    if(d.action==='STOP'){ state.active=false; state.pending=null; emit(stateView(false)); state.lastDom=null; return; }
-    if(d.action==='STATE') emit(stateView(state.active));
+    if(d.action==='MARK'&&state.active){ state.lastDom=d.mark||null; state.correlationMs=Number(d.correlationMs)||state.correlationMs; return; }
+    if(d.action==='STOP'){ state.active=false; emit(view(false)); state.lastDom=null; return; }
+    if(d.action==='STATE') emit(view(state.active));
   },true);
-  emit({kind:'READY',installed:state.installed,hooks:{...state.hooks},active:false,totalSends:0,correlatedSends:0,clientDataChannelSeen:false,buttonTemplateSeen:false,totalCorrections:0,nativeEquivalentCount:0,skippedNoTemplate:0,skippedNoIdCmd:0,expiredCorrections:0});
-})();`;
+  emit({kind:'READY',installed:state.installed,hooks:{...state.hooks},active:false,totalSends:0,correlatedSends:0,clientDataChannelSeen:false,buttonPackets:0,movePackets:0,buttonStacksCaptured:0,moveStacksCaptured:0});
+})();
+//# sourceURL=bcs-rc11-native-sender-discovery.js`;
   try {
     const sc=document.createElement('script'); sc.textContent=source;
     (document.documentElement || document.head || document).appendChild(sc); sc.remove();
@@ -1501,102 +1336,76 @@ function installMouseTransportObserverPage() {
 }
 
 function setMouseTransportProbeEnabled(enabled, reason='UI') {
-  const M=S.mouseTransport;
-  enabled=!!enabled;
-  if (enabled===M.enabled) return;
-  if (!enabled && M.enabled && Number(M.lastDomEvent?.buttons)>0) {
-    M.counters.stopBlockedButtonsHeld++;
-    pushMouseTransportEvent('RECONCILIATION_STOP_BLOCKED_BUTTONS_HELD',{reason,buttons:M.lastDomEvent?.buttons??null},true);
-    if (reason==='AUTO_TIMEOUT') M.autoStopTimer=setTimeout(()=>setMouseTransportProbeEnabled(false,'AUTO_TIMEOUT'),500);
-    updateUI();
-    return;
-  }
+  const M=S.mouseTransport; enabled=!!enabled; if (enabled===M.enabled) return;
   if (enabled) {
-    resetMouseTransportTelemetry();
-    M.enabled=true; M.startedAtSec=round(elapsed(),3); M.stoppedAtSec=null;
+    resetMouseTransportTelemetry(); M.enabled=true; M.startedAtSec=round(elapsed(),3); M.stoppedAtSec=null;
     M.inputProbeOwned=!S.inputProbe.enabled;
-    if (M.inputProbeOwned) setInputProbeEnabled(true,'RC10_MOUSE_RECONCILIATION');
+    if (M.inputProbeOwned) setInputProbeEnabled(true,'RC11_NATIVE_MOUSE_SENDER_DISCOVERY');
     dispatchMouseTransportControl({action:'START',correlationMs:MOUSE_TRANSPORT_CORRELATION_MS});
     if (M.autoStopTimer) clearTimeout(M.autoStopTimer);
     M.autoStopTimer=setTimeout(()=>setMouseTransportProbeEnabled(false,'AUTO_TIMEOUT'),MOUSE_TRANSPORT_AUTO_STOP_MS);
-    pushMouseTransportEvent('MOUSE_RECONCILIATION_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS,correlationMs:MOUSE_TRANSPORT_CORRELATION_MS},true);
-    addEvent('MOUSE_RECONCILIATION_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS,correlationMs:MOUSE_TRANSPORT_CORRELATION_MS});
+    pushMouseTransportEvent('MOUSE_SENDER_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS},true);
+    addEvent('MOUSE_SENDER_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS});
   } else {
     dispatchMouseTransportControl({action:'STOP'});
-    pushMouseTransportEvent('MOUSE_RECONCILIATION_STOP',{reason},true);
+    pushMouseTransportEvent('MOUSE_SENDER_DISCOVERY_STOP',{reason},true);
     M.enabled=false; M.stoppedAtSec=round(elapsed(),3);
     if (M.autoStopTimer) { clearTimeout(M.autoStopTimer); M.autoStopTimer=null; }
-    if (M.inputProbeOwned && S.inputProbe.enabled) setInputProbeEnabled(false,'RC10_MOUSE_RECONCILIATION_STOP');
+    if (M.inputProbeOwned && S.inputProbe.enabled) setInputProbeEnabled(false,'RC11_NATIVE_MOUSE_SENDER_DISCOVERY_STOP');
     M.inputProbeOwned=false;
-    addEvent('MOUSE_RECONCILIATION_STOP',{reason,eventCount:M.events.count,correctionsApplied:M.counters.correctionsApplied});
+    addEvent('MOUSE_SENDER_DISCOVERY_STOP',{reason,eventCount:M.events.count,buttonStacksCaptured:M.counters.buttonStacksCaptured});
   }
   updateUI();
 }
 
 function buildMouseTransportAnalysis(events) {
-  const sends=events.filter(e=>e.type==='CLIENT_DATA_CHANNEL_SEND'&&e.ok!==false);
-  const groups={};
-  for (const e of sends) {
-    const key=e.case || 'UNKNOWN';
-    const g=groups[key]||(groups[key]={sendCount:0,reconciledCount:0,fingerprints:{},sizes:{},formats:{},examples:[]});
-    g.sendCount++; if(e.reconciled) g.reconciledCount++;
-    const fp=e.payload?.fingerprint||'NULL'; g.fingerprints[fp]=(g.fingerprints[fp]||0)+1;
-    const sz=String(e.payload?.size??'NULL'); g.sizes[sz]=(g.sizes[sz]||0)+1;
-    const fmt=e.payload?.semantic?.format||'UNKNOWN'; g.formats[fmt]=(g.formats[fmt]||0)+1;
-    if(g.examples.length<2) g.examples.push({reconciled:e.reconciled===true,fingerprint:e.payload?.fingerprint||null,size:e.payload?.size??null,semantic:e.payload?.semantic||null});
+  const buttons=events.filter(e=>e.type==='NATIVE_MOUSE_BUTTON_SEND'&&e.ok!==false);
+  const moves=events.filter(e=>e.type==='NATIVE_MOUSE_MOVE_SEND'&&e.ok!==false);
+  const required=['LMB_DOWN_SINGLE','LMB_UP_SINGLE','RMB_DOWN_SINGLE','RMB_UP_SINGLE'];
+  const present=[...new Set(buttons.map(e=>e.case).filter(c=>required.includes(c)))];
+  function candidateMap(list){
+    const map={};
+    for(const e of list){
+      const st=e.stack; if(!st?.captured) continue;
+      const c=st.caller||null;
+      const key=c ? `${c.functionName||'<anonymous>'}|${c.source||'<unknown>'}|${c.line??'?' }|${c.column??'?'}` : `STACK:${st.fingerprint||'UNKNOWN'}`;
+      const g=map[key]||(map[key]={count:0,cases:{},caller:c,stackFingerprint:st.fingerprint||null,frames:st.frames||[]});
+      g.count++; const k=e.case||'UNKNOWN'; g.cases[k]=(g.cases[k]||0)+1;
+    }
+    return map;
   }
+  const buttonCandidates=candidateMap(buttons), moveCandidates=candidateMap(moves);
+  const buttonCandidateValues=Object.values(buttonCandidates).sort((a,b)=>b.count-a.count);
   let classification='INCONCLUSIVE';
-  if (!S.mouseTransport.pageObserver.installed) classification='RTC_DATA_CHANNEL_HOOK_UNAVAILABLE';
-  else if (S.mouseTransport.counters.correctionsApplied>0) classification='MULTI_BUTTON_RECONCILIATION_APPLIED__LIVE_BEHAVIOR_REQUIRED';
-  else if (S.mouseTransport.counters.nativeEquivalentSeen>0) classification='NATIVE_EQUIVALENT_BUTTON_PRESENT__NO_REPLACEMENT_REQUIRED';
-  else if (S.mouseTransport.counters.correctionCandidates>0 && S.mouseTransport.counters.skippedNoTemplate>0) classification='RECONCILIATION_SKIPPED__NATIVE_BUTTON_TEMPLATE_MISSING';
-  else if (S.mouseTransport.counters.correctionCandidates>0 && S.mouseTransport.counters.skippedNoIdCmd>0) classification='RECONCILIATION_SKIPPED__NATIVE_ID_CMD_MISSING';
-  else if (S.mouseTransport.counters.correctionCandidates>0) classification='RECONCILIATION_CANDIDATE_SEEN__NO_REPLACEMENT';
+  if(!S.mouseTransport.pageObserver.installed) classification='RTC_DATA_CHANNEL_HOOK_UNAVAILABLE';
+  else if(!buttons.length) classification='NO_NATIVE_MOUSE_BUTTON_PACKETS_CAPTURED';
+  else if(S.mouseTransport.counters.buttonStacksCaptured===0) classification='BUTTON_PACKETS_SEEN__STACK_CAPTURE_FAILED';
+  else if(buttonCandidateValues.some(v=>v.caller?.source)) classification='NATIVE_BUTTON_CALLER_CANDIDATES_CAPTURED';
+  else classification='BUTTON_STACK_CAPTURED__CALLER_UNRESOLVED';
   return {
-    classification,
-    observedSendCount:sends.length,
-    correctionCandidates:S.mouseTransport.counters.correctionCandidates,
-    correctionsApplied:S.mouseTransport.counters.correctionsApplied,
-    downCorrections:S.mouseTransport.counters.downCorrections,
-    upCorrections:S.mouseTransport.counters.upCorrections,
-    nativeEquivalentSeen:S.mouseTransport.counters.nativeEquivalentSeen,
-    buttonTemplatesSeen:S.mouseTransport.counters.buttonTemplatesSeen,
-    caseMap:groups,
-    protocolEvidence:{type:'mouse',action:'button',buttonField:'btn',pressedField:'isPressed',leftButton:0,rightButton:2,idCmdPolicy:'REUSE_ID_CMD_FROM_REPLACED_NATIVE_MOVE_PACKET'},
-    privacy:'No raw payload or native template is exported. Only sanitized payload structure/fingerprint and reconciliation metadata are retained.',
-    caveat:'RC10 is an experimental compatibility fix. It replaces one correlated native mouse/move packet per proven missing simultaneous transition; LIVE behavior and stuck-button regression must be validated before any promotion.'
+    classification,requiredCases:required,presentCases:present,completeRequiredCases:required.every(c=>present.includes(c)),
+    buttonPacketCount:buttons.length,moveSampleCount:moves.length,
+    buttonStacksCaptured:S.mouseTransport.counters.buttonStacksCaptured,moveStacksCaptured:S.mouseTransport.counters.moveStacksCaptured,
+    senderCandidates:buttonCandidateValues.slice(0,12),moveCallerCandidates:Object.values(moveCandidates).sort((a,b)=>b.count-a.count).slice(0,8),
+    protocolEvidence:{type:'mouse',action:'button',buttonField:'btn',pressedField:'isPressed',leftButton:0,rightButton:2},
+    privacy:'No raw payload, cookies, tokens or request query strings are stored. Stack URLs are reduced to origin+pathname; only function/file/line/column metadata is retained.',
+    caveat:'RC11 is observational only. A captured caller frame is a sender candidate until the referenced Boosteroid bundle/function is inspected and verified.'
   };
 }
 
 function mouseTransportSnapshot() {
-  const M=S.mouseTransport;
-  const events=M.events.toArray();
+  const M=S.mouseTransport,events=M.events.toArray();
   return {
-    schemaVersion:3,
-    mode:'H014C_MINIMAL_MULTI_BUTTON_RECONCILIATION',
-    enabled:M.enabled,
-    observationalOnly:false,
-    manualExperimentalGate:true,
-    clientDataChannelOnly:true,
-    rawPayloadCapture:false,
-    nativeTemplateStoredInMemoryOnly:true,
-    selectivePayloadReplacement:true,
-    newTransportSendInjection:false,
-    syntheticMouseEvents:false,
-    syntheticPointerEvents:false,
-    idCmdPolicy:'REUSE_REPLACED_NATIVE_PACKET',
-    correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS,
-    maxEvents:MAX_MOUSE_TRANSPORT_EVENTS,
-    autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS,
-    retainedEvents:M.events.count,
-    overwrittenEvents:Math.max(0,M.events.total-M.events.count),
-    startedAtSec:M.startedAtSec,
-    stoppedAtSec:M.stoppedAtSec,
-    counters:{...M.counters},
-    pageObserver:{...M.pageObserver},
-    analysis:buildMouseTransportAnalysis(events),
-    testProtocol:['start FIX TESTE','LMB alone x3 to learn native template','RMB alone x3','hold RMB then LMB x3 and verify both work in-game','release all','hold LMB then RMB x3 and verify both work in-game','release all before stopping','stop FIX TESTE and export'],
-    events
+    schemaVersion:4,mode:'H014C_NATIVE_MOUSE_SENDER_DISCOVERY',enabled:M.enabled,
+    observationalOnly:true,manualDiagnosticGate:true,clientDataChannelOnly:true,
+    rawPayloadCapture:false,payloadMutation:false,newTransportSendInjection:false,
+    syntheticMouseEvents:false,syntheticPointerEvents:false,stackCapture:true,
+    stackPrivacy:'BOOSTEROID_SCRIPT_PATH_FUNCTION_LINE_COLUMN__QUERY_HASH_STRIPPED',
+    correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS,maxEvents:MAX_MOUSE_TRANSPORT_EVENTS,
+    autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS,retainedEvents:M.events.count,
+    overwrittenEvents:Math.max(0,M.events.total-M.events.count),startedAtSec:M.startedAtSec,stoppedAtSec:M.stoppedAtSec,
+    counters:{...M.counters},pageObserver:{...M.pageObserver},analysis:buildMouseTransportAnalysis(events),
+    testProtocol:['enter immersive / pointer lock','start SENDER TESTE','LMB normal x3','RMB normal x3','stop SENDER TESTE','export JSON'],events
   };
 }
 
@@ -5340,13 +5149,13 @@ function buildExport() {
       name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
       pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
       schemaVersion:2,
-      status:'V0.8.1_RC10__MINIMAL_MULTI_BUTTON_RECONCILIATION__NOT_CANONICAL'
+      status:'V0.8.1_RC11__NATIVE_MOUSE_SENDER_DISCOVERY__NOT_CANONICAL'
     },
     exportedAt:new Date().toISOString(),
     environment:ENV,
     capabilities:CAP,
     inputCompatibility:inputProbeSnapshot(),
-    mouseMultiButtonReconciliation:mouseTransportSnapshot(),
+    mouseNativeSenderDiscovery:mouseTransportSnapshot(),
     immersiveGameMode:immersiveSnapshot(),
     profile:currentPreferenceSnapshot(),
     control:{
@@ -5494,7 +5303,7 @@ function buildExport() {
       pageMethodOverrides:S.control.state==='ACTIVE' && (S.control.application?.patch?.patched||S.control.application?.patched) ? ['StreamDeviceContext.getSafeResolution','SessionHandler.getWindowResolution'] : [],
       exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
       controlModel:'PERSISTENT_AUTO_APPLY',
-      telemetryIntegrityModel:'RC10_MULTI_BUTTON_RECONCILIATION_PLUS_RC9_PAYLOAD_MAPPING_PLUS_RC7_IMMERSIVE_GAME_MODE',
+      telemetryIntegrityModel:'RC11_NATIVE_MOUSE_SENDER_DISCOVERY_PLUS_RC9_PAYLOAD_MAPPING_PLUS_RC7_IMMERSIVE_GAME_MODE',
       legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
       longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls',
       telemetryIntegrity:{
@@ -5515,21 +5324,19 @@ function buildExport() {
         keyboardLockUserTriggeredOnly:true,
         keyboardLockCodes:[...IMMERSIVE_KEY_CODES],
         syntheticRemoteInput:false,
-        mouseTransportOverride:'RC10_MANUAL_EXPERIMENTAL_ONLY'
+        mouseTransportOverride:false
       },
-      mouseMultiButtonReconciliation:{
-        manualExperimentalGate:true,
+      mouseNativeSenderDiscovery:{
+        manualDiagnosticGate:true,
         pageContextHookInstalledAtDocumentStart:true,
         hook:'RTCDataChannel.prototype.send',
         channelFilter:'ClientDataChannel',
-        passThroughWhenDisabled:true,
-        selectiveReplacementWhenArmed:true,
-        correctionCases:['LMB_DOWN_WHILE_RMB','LMB_UP_WHILE_RMB','RMB_DOWN_WHILE_LMB','RMB_UP_WHILE_LMB'],
-        correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS,
+        passThroughAlways:true,
+        payloadMutation:false,
+        additionalTransportSend:false,
+        stackCapture:'bounded native button stacks + small move comparison sample',
+        stackPrivacy:'origin+pathname + function + line + column; URL query/hash stripped',
         rawPayloadCapture:false,
-        nativeButtonTemplate:'MEMORY_ONLY_NOT_EXPORTED_RAW',
-        newTransportSendInjection:false,
-        idCmdPolicy:'REUSE_REPLACED_NATIVE_PACKET',
         syntheticMouseEvents:false,
         syntheticPointerEvents:false
       },
@@ -5683,14 +5490,14 @@ function updateUI(sample = null) {
   setText('bcs-input-counts',`${P.counters.keydown}/${P.counters.mousedown}/${P.counters.pointerdown}`);
   setText('bcs-mouse-transport-state',M.enabled ? 'ON' : 'OFF');
   setText('bcs-mouse-transport-hooks',`${M.pageObserver.rtcDataChannelHook?'RTC':'-'} / ${M.pageObserver.clientDataChannelSeen?'CLIENT':'-'}`);
-  setText('bcs-mouse-transport-counts',`${M.counters.buttonTemplatesSeen}/${M.counters.correctionsApplied}`);
+  setText('bcs-mouse-transport-counts',`${M.counters.buttonStacksCaptured}/${M.counters.moveStacksCaptured}`);
   const mtAnalysis=buildMouseTransportAnalysis(M.events.toArray());
   setText('bcs-mouse-transport-result',mtAnalysis.classification);
   setText('bcs-immersive-error',I.lastError ? `${I.lastError.stage}: ${I.lastError.error}` : '--');
   const probeBtn=$('bcs-input-probe-toggle');
   if (probeBtn) probeBtn.textContent=P.enabled ? 'PARAR PROBE' : 'INICIAR PROBE';
   const mouseTransportBtn=$('bcs-mouse-transport-toggle');
-  if (mouseTransportBtn) mouseTransportBtn.textContent=M.enabled ? 'PARAR FIX TESTE' : 'INICIAR FIX TESTE';
+  if (mouseTransportBtn) mouseTransportBtn.textContent=M.enabled ? 'PARAR SENDER TESTE' : 'INICIAR SENDER TESTE';
   const immersiveBtn=$('bcs-immersive-toggle');
   if (immersiveBtn) {
     immersiveBtn.disabled=I.entering || I.exiting || !IS_STREAM_DOCUMENT;
@@ -5772,14 +5579,14 @@ html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display
     <div class="bcs-row"><span>Key↓ / Mouse↓ / Pointer↓</span><b id="bcs-input-counts">0/0/0</b></div>
     <div class="bcs-row"><span>Último evento</span><b id="bcs-input-last">--</b></div>
     <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-input-probe-toggle" class="bcs-btn">INICIAR PROBE</button></div>
-    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC10 não cria KeyboardEvent/MouseEvent/PointerEvent sintético.</div>
-    <div class="bcs-st">RC10 • MULTI-BUTTON FIX EXPERIMENTAL</div>
-    <div class="bcs-row"><span>Fix teste</span><b id="bcs-mouse-transport-state">OFF</b></div>
+    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC11 não cria KeyboardEvent/MouseEvent/PointerEvent sintético.</div>
+    <div class="bcs-st">RC11 • NATIVE MOUSE SENDER DISCOVERY</div>
+    <div class="bcs-row"><span>Sender teste</span><b id="bcs-mouse-transport-state">OFF</b></div>
     <div class="bcs-row"><span>Hook / canal</span><b id="bcs-mouse-transport-hooks">- / -</b></div>
-    <div class="bcs-row"><span>Templates / correções</span><b id="bcs-mouse-transport-counts">0/0</b></div>
+    <div class="bcs-row"><span>Stacks botão / move</span><b id="bcs-mouse-transport-counts">0/0</b></div>
     <div class="bcs-row"><span>Diagnóstico</span><b id="bcs-mouse-transport-result">INCONCLUSIVE</b></div>
-    <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-mouse-transport-toggle" class="bcs-btn bcs-primary">INICIAR FIX TESTE</button></div>
-    <div class="bcs-note">EXPERIMENTAL: LMB x3 → RMB x3 para aprender o formato nativo → segure RMB + LMB x3 → solte tudo → segure LMB + RMB x3 → solte tudo. RC10 substitui no máximo um mouse/move nativo por mouse/button por transição perdida, reutilizando o id_cmd daquele próprio pacote. Solte todos os botões antes de PARAR.</div>
+    <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-mouse-transport-toggle" class="bcs-btn bcs-primary">INICIAR SENDER TESTE</button></div>
+    <div class="bcs-note">OBSERVACIONAL: com Pointer Lock ativo, faça somente LMB normal x3 e RMB normal x3, com pouco movimento. RC11 registra call stacks sanitizadas dos pacotes mouse/button nativos que já funcionam; não altera nem reenvia input.</div>
   </div>
 
   <div class="bcs-card" id="bcs-analyzer-card">
@@ -5907,13 +5714,13 @@ function boot() {
   addEvent('SUITE_BOOT',{
     version:VERSION,
     build:BUILD,
-    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC10_MULTI_BUTTON_RECONCILIATION__RC7_IMMERSIVE_GAME_MODE',
+    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC11_NATIVE_MOUSE_SENDER_DISCOVERY__RC7_IMMERSIVE_GAME_MODE',
     controlModel:'PERSISTENT_AUTO_APPLY',
     profileEnabled:isAutoEnabled(),
     bootBehavior:isAutoEnabled() ? 'AUTO_APPLY_ENABLED' : 'SAFE',
     environment:{browser:ENV.browser,likelyPlatform:ENV.likelyPlatform},
     inputCompatibility:{probeEnabled:false,keyboardLock:CAP.input.keyboardLock,pointerEvents:CAP.input.pointer,pointerLock:CAP.input.pointerLock},
-    mouseMultiButtonReconciliation:{enabled:false,manualExperimentalGate:true,clientDataChannelOnly:true,rawPayloadCapture:false,nativeTemplateStoredInMemoryOnly:true,selectivePayloadReplacement:true,newTransportSendInjection:false,syntheticMouseEvents:false,syntheticPointerEvents:false,idCmdPolicy:'REUSE_REPLACED_NATIVE_PACKET',correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS},
+    mouseNativeSenderDiscovery:{enabled:false,observationalOnly:true,manualDiagnosticGate:true,clientDataChannelOnly:true,rawPayloadCapture:false,payloadMutation:false,newTransportSendInjection:false,syntheticMouseEvents:false,syntheticPointerEvents:false,stackCapture:true,correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS},
     immersiveGameMode:{enabled:false,userTriggered:true,fullscreen:CAP.display.fullscreen,keyboardLock:CAP.input.keyboardLock,pointerLock:CAP.input.pointerLock,exitChord:IMMERSIVE_EXIT_CHORD_LABEL}
   });
   if (isAutoEnabled()) {
