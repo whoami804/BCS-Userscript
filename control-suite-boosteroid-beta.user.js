@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc12
-// @description  H-014C native sender reference/arguments discovery: observes pointer listener registrations, native mouse/button call stacks and sanitized sender call shape; no input mutation.
+// @version      0.8.1-rc13
+// @description  H-014C native handler call-shape discovery: inspects registered mouse/pointer handlers, guards, receiver paths and callable sender references without invoking or mutating input.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc12';
-const BUILD = 'Native Sender Reference & Arguments Discovery + Immersive Game Mode + Telemetry Integrity - RC12';
+const VERSION = '0.8.1-rc13';
+const BUILD = 'Native Handler Call Shape Discovery + Immersive Game Mode + Telemetry Integrity - RC13';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -33,8 +33,8 @@ const INPUT_PROBE_AUTO_STOP_MS = 2 * 60 * 1000;
 const MAX_MOUSE_TRANSPORT_EVENTS = 512;
 const MOUSE_TRANSPORT_AUTO_STOP_MS = 30 * 1000;
 const MOUSE_TRANSPORT_CORRELATION_MS = 120;
-const MOUSE_TRANSPORT_CONTROL_EVENT = '__BCS_RC12_NATIVE_SENDER_REF_CONTROL__';
-const MOUSE_TRANSPORT_OBS_EVENT = '__BCS_RC12_NATIVE_SENDER_REF_OBS__';
+const MOUSE_TRANSPORT_CONTROL_EVENT = '__BCS_RC13_NATIVE_HANDLER_SHAPE_CONTROL__';
+const MOUSE_TRANSPORT_OBS_EVENT = '__BCS_RC13_NATIVE_HANDLER_SHAPE_OBS__';
 const IMMERSIVE_KEY_CODES = Object.freeze(['Escape','Tab']);
 const IMMERSIVE_EXIT_CHORD = Object.freeze({ code:'Escape', ctrlKey:true, altKey:true, shiftKey:true });
 const IMMERSIVE_EXIT_CHORD_LABEL = 'Ctrl+Alt+Shift+Esc';
@@ -501,15 +501,15 @@ const S = {
       correlatedSends:0,buttonPackets:0,movePackets:0,
       buttonStacksCaptured:0,moveStacksCaptured:0,stackParseErrors:0,transportErrors:0,
       pointerListenerRegistrations:0,pointerHandlerCandidates:0,sourceInspections:0,
-      senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0
+      senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0,listenerCallShapesFound:0,targetSenderRefsFound:0
     },
     pageObserver: {
       installed:false,rtcDataChannelHook:false,addEventListenerHook:false,clientDataChannelSeen:false,
       pageSendCount:0,pageCorrelatedCount:0,buttonPackets:0,movePackets:0,
       buttonStacksCaptured:0,moveStacksCaptured:0,pointerListenerRegistrations:0,
       pointerHandlerCandidates:0,sourceInspections:0,senderDefinitionsFound:0,
-      senderCallShapesFound:0,globalSenderRefsFound:0,lastState:null,
-      listenerCandidates:[],sourceFindings:[],globalSenderRefs:[]
+      senderCallShapesFound:0,globalSenderRefsFound:0,listenerCallShapesFound:0,targetSenderRefsFound:0,lastState:null,
+      listenerCandidates:[],sourceFindings:[],globalSenderRefs:[],targetSenderRefs:[]
     }
   },
   immersive: {
@@ -1129,16 +1129,15 @@ function inputProbeSnapshot() {
 
 
 // -----------------------------------------------------------------------------
-// NATIVE SENDER REFERENCE & ARGUMENTS DISCOVERY - RC12 / H-014C
-// RC11 LIVE identified the working native button pipeline:
-//   handlePointerMouseButtonEvent -> sendMouseButtonEvent -> sendRttEvent ->
-//   sendEvents -> sendMessage -> sendDataChannelMessage -> RTCDataChannel.send.
-// RC12 stays observational-only. At document-start it pass-through observes
-// pointer listener registrations without wrapping listener callbacks, retains
-// callable references only in page memory, captures the already-proven native
-// button stacks, performs a bounded global-reference scan, and inspects the
-// same-origin catch-events.js source only enough to derive sanitized function
-// signatures / call-argument shapes. No raw source or payload is exported.
+// NATIVE HANDLER CALL SHAPE DISCOVERY - RC13 / H-014C
+// RC11 LIVE identified the working native button pipeline and RC12 LIVE proved
+// sendMouseButtonEvent(event, pressedStatus) plus the registered VIDEO handlers:
+//   mousedown/up -> getMouseButtonEvent(event)
+//   pointerdown/up -> handlePointerMouseButtonEvent(event)
+// RC13 remains observational-only. It analyzes Function#toString() for those
+// already-registered handlers to extract only sanitized call shapes, guards,
+// receiver paths, and candidate target/prototype method references. It never
+// invokes the handlers/sender, never replaces listeners, and never mutates input.
 // -----------------------------------------------------------------------------
 function pushMouseTransportEvent(type, data = {}, force = false) {
   const M=S.mouseTransport;
@@ -1159,14 +1158,16 @@ function resetMouseTransportTelemetry() {
     correlatedSends:0,buttonPackets:0,movePackets:0,
     buttonStacksCaptured:0,moveStacksCaptured:0,stackParseErrors:0,transportErrors:0,
     pointerListenerRegistrations:0,pointerHandlerCandidates:0,sourceInspections:0,
-    senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0
+    senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0,
+    listenerCallShapesFound:0,targetSenderRefsFound:0
   };
   Object.assign(M.pageObserver,{
     pageSendCount:0,pageCorrelatedCount:0,clientDataChannelSeen:false,
     buttonPackets:0,movePackets:0,buttonStacksCaptured:0,moveStacksCaptured:0,
     pointerListenerRegistrations:0,pointerHandlerCandidates:0,sourceInspections:0,
     senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0,
-    listenerCandidates:[],sourceFindings:[],globalSenderRefs:[],lastState:null
+    listenerCallShapesFound:0,targetSenderRefsFound:0,
+    listenerCandidates:[],sourceFindings:[],globalSenderRefs:[],targetSenderRefs:[],lastState:null
   });
 }
 
@@ -1224,19 +1225,21 @@ function syncMouseObserverState(detail) {
     buttonPackets:'buttonPackets',movePackets:'movePackets',
     buttonStacksCaptured:'buttonStacksCaptured',moveStacksCaptured:'moveStacksCaptured',
     pointerListenerRegistrations:'pointerListenerRegistrations',
-    pointerHandlerCandidates:'pointerHandlerCandidates',
-    sourceInspections:'sourceInspections',senderDefinitionsFound:'senderDefinitionsFound',
-    senderCallShapesFound:'senderCallShapesFound',globalSenderRefsFound:'globalSenderRefsFound'
+    pointerHandlerCandidates:'pointerHandlerCandidates',sourceInspections:'sourceInspections',
+    senderDefinitionsFound:'senderDefinitionsFound',senderCallShapesFound:'senderCallShapesFound',
+    globalSenderRefsFound:'globalSenderRefsFound',listenerCallShapesFound:'listenerCallShapesFound',
+    targetSenderRefsFound:'targetSenderRefsFound'
   };
   for (const [k,v] of Object.entries(map)) if (Number.isFinite(detail[k])) M.pageObserver[v]=detail[k];
   if (Array.isArray(detail.listenerCandidates)) M.pageObserver.listenerCandidates=detail.listenerCandidates.slice(0,24);
   if (Array.isArray(detail.sourceFindings)) M.pageObserver.sourceFindings=detail.sourceFindings.slice(0,12);
   if (Array.isArray(detail.globalSenderRefs)) M.pageObserver.globalSenderRefs=detail.globalSenderRefs.slice(0,12);
+  if (Array.isArray(detail.targetSenderRefs)) M.pageObserver.targetSenderRefs=detail.targetSenderRefs.slice(0,16);
 }
 
 function onMouseTransportObservation(e) {
   const detail=e?.detail;
-  if (!detail || detail.schemaVersion!==5) return;
+  if (!detail || detail.schemaVersion!==6) return;
   const M=S.mouseTransport;
   if (detail.kind==='READY' || detail.kind==='STATE' || detail.kind==='DISCOVERY') {
     syncMouseObserverState(detail);
@@ -1246,7 +1249,10 @@ function onMouseTransportObservation(e) {
       buttonStacksCaptured:detail.buttonStacksCaptured??null,
       pointerListenerRegistrations:detail.pointerListenerRegistrations??null,
       pointerHandlerCandidates:detail.pointerHandlerCandidates??null,
-      sourceFindings:detail.sourceFindings||null,globalSenderRefs:detail.globalSenderRefs||null
+      listenerCallShapesFound:detail.listenerCallShapesFound??null,
+      targetSenderRefsFound:detail.targetSenderRefsFound??null,
+      listenerCandidates:detail.listenerCandidates||null,
+      sourceFindings:detail.sourceFindings||null,targetSenderRefs:detail.targetSenderRefs||null
     },true);
     updateUI(); return;
   }
@@ -1277,26 +1283,27 @@ function installMouseTransportObserverPage() {
   const source = String.raw`
 (() => {
   'use strict';
-  if (window.__BCS_RC12_NATIVE_SENDER_REF_OBSERVER__) return;
-  window.__BCS_RC12_NATIVE_SENDER_REF_OBSERVER__=true;
+  if (window.__BCS_RC13_NATIVE_HANDLER_SHAPE_OBSERVER__) return;
+  window.__BCS_RC13_NATIVE_HANDLER_SHAPE_OBSERVER__=true;
   const CTRL='${MOUSE_TRANSPORT_CONTROL_EVENT}';
   const OBS='${MOUSE_TRANSPORT_OBS_EVENT}';
-  const TARGET_NAMES=['sendMouseButtonEvent','handlePointerMouseButtonEvent','sendRttEvent','sendEvents','sendMessage'];
+  const TARGET_NAMES=['sendMouseButtonEvent','handlePointerMouseButtonEvent','getMouseButtonEvent','sendRttEvent','sendEvents','sendMessage'];
   const state={
     active:false,installed:false,seq:0,lastDom:null,correlationMs:${MOUSE_TRANSPORT_CORRELATION_MS},
     totalSends:0,correlatedSends:0,clientDataChannelSeen:false,
     hooks:{rtcDataChannel:false,addEventListener:false},
     buttonPackets:0,movePackets:0,buttonStacksCaptured:0,moveStacksCaptured:0,
-    maxButtonStacks:32,maxMoveStacks:8,
+    maxButtonStacks:24,maxMoveStacks:6,
     pointerListenerRegistrations:0,pointerHandlerCandidates:0,
     sourceInspections:0,senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0,
-    listenerCandidates:[],listenerRefs:[],sourceFindings:[],globalSenderRefs:[],globalRefObjects:[]
+    listenerCallShapesFound:0,targetSenderRefsFound:0,
+    listenerCandidates:[],listenerRefs:[],sourceFindings:[],globalSenderRefs:[],globalRefObjects:[],targetSenderRefs:[],targetRefObjects:[]
   };
   function fnvText(text){ let h=2166136261>>>0,s=String(text); for(let i=0;i<s.length;i++){ const c=s.charCodeAt(i); h^=c&255; h=Math.imul(h,16777619)>>>0; h^=(c>>>8)&255; h=Math.imul(h,16777619)>>>0; } return 'fnv1a32:'+('00000000'+h.toString(16)).slice(-8); }
   function parseJson(data){ if(typeof data!=='string') return null; try { const v=JSON.parse(data); return v&&typeof v==='object'&&!Array.isArray(v)?v:null; } catch { return null; } }
   function safeSource(raw){
     const v=String(raw||''); if(!v) return null;
-    if(v.includes('bcs-rc12-native-sender-reference.js')) return 'bcs-rc12-native-sender-reference.js';
+    if(v.includes('bcs-rc13-native-handler-shape.js')) return 'bcs-rc13-native-handler-shape.js';
     try { const u=new URL(v); if(u.protocol==='http:'||u.protocol==='https:') return u.origin+u.pathname; if(u.protocol==='blob:') return 'blob:'+u.origin; return u.protocol; } catch {}
     return v.slice(0,180);
   }
@@ -1308,19 +1315,71 @@ function installMouseTransportObserverPage() {
   }
   function captureStack(){
     try {
-      const raw=String(new Error('BCS_RC12_NATIVE_SENDER_REF').stack||'');
+      const raw=String(new Error('BCS_RC13_NATIVE_HANDLER_SHAPE').stack||'');
       const frames=raw.split('\n').slice(1).map(parseFrame).filter(Boolean).slice(0,16);
-      const external=frames.filter(f=>!String(f.source||'').includes('bcs-rc12-native-sender-reference.js')).slice(0,10);
-      const caller=external[0]||null;
-      return {captured:true,fingerprint:fnvText(JSON.stringify(external)),caller,frames:external,parseError:false};
+      const external=frames.filter(f=>!String(f.source||'').includes('bcs-rc13-native-handler-shape.js')).slice(0,10);
+      return {captured:true,fingerprint:fnvText(JSON.stringify(external)),caller:external[0]||null,frames:external,parseError:false};
     } catch(e) { return {captured:false,fingerprint:null,caller:null,frames:[],parseError:true,error:String(e?.message||e).slice(0,100)}; }
   }
   function targetLabel(target){
-    try {
-      if(target===window) return 'WINDOW'; if(target===document) return 'DOCUMENT';
-      const tag=String(target?.tagName||target?.constructor?.name||'OBJECT').toUpperCase();
-      return tag.slice(0,80);
-    } catch { return 'OBJECT'; }
+    try { if(target===window) return 'WINDOW'; if(target===document) return 'DOCUMENT'; return String(target?.tagName||target?.constructor?.name||'OBJECT').toUpperCase().slice(0,80); }
+    catch { return 'OBJECT'; }
+  }
+  function splitArgs(text){
+    const out=[]; let cur='',depth=0,quote=null,esc=false;
+    for(const ch of String(text||'')){
+      if(quote){ cur+=ch; if(esc){esc=false;continue;} if(ch==='\\'){esc=true;continue;} if(ch===quote) quote=null; continue; }
+      if(ch==='"'||ch==="'"){quote=ch;cur+=ch;continue;}
+      if(ch==='('||ch==='['||ch==='{'){depth++;cur+=ch;continue;}
+      if(ch===')'||ch===']'||ch==='}'){depth=Math.max(0,depth-1);cur+=ch;continue;}
+      if(ch===','&&depth===0){out.push(cur.trim());cur='';continue;} cur+=ch;
+    }
+    if(cur.trim()) out.push(cur.trim()); return out.slice(0,10);
+  }
+  function tokenShape(expr){
+    const s=String(expr||'').trim();
+    const propertyPaths=[...new Set(s.match(/(?:this|[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)+/g)||[])].slice(0,20);
+    const identifiers=[...new Set((s.match(/[A-Za-z_$][\w$]*/g)||[]).filter(x=>!['true','false','null','undefined'].includes(x)))].slice(0,24);
+    const literals=[]; for(const m of s.matchAll(/["']([^"']{0,40})["']/g)){ if(['pointerdown','pointerup','mousedown','mouseup','mouse','button'].includes(m[1])) literals.push(m[1]); }
+    const booleans=[...new Set(s.match(/\b(?:true|false)\b/g)||[])];
+    const numbers=[...new Set((s.match(/(?:^|[^\w.])-?\d+(?:\.\d+)?/g)||[]).map(x=>Number(x.match(/-?\d+(?:\.\d+)?/)[0])).filter(Number.isFinite).filter(n=>Math.abs(n)<=64))].slice(0,12);
+    const operators=(s.match(/===|!==|==|!=|&&|\|\||<=|>=|=>|[!?<>:]/g)||[]).slice(0,24);
+    return {length:s.length,hash:fnvText(s),propertyPaths,identifiers,literals:[...new Set(literals)],booleans,numbers,operators};
+  }
+  function balancedAt(s,openIdx,open='(',close=')'){
+    let depth=1,quote=null,esc=false;
+    for(let i=openIdx+1;i<s.length;i++){
+      const ch=s[i];
+      if(quote){ if(esc){esc=false;continue;} if(ch==='\\'){esc=true;continue;} if(ch===quote) quote=null; continue; }
+      if(ch==='"'||ch==="'"){quote=ch;continue;}
+      if(ch===open) depth++; else if(ch===close){ depth--; if(depth===0) return i; }
+    }
+    return -1;
+  }
+  function callShapesFromRaw(raw,name){
+    const s=String(raw||''), out=[]; let from=0;
+    while(out.length<8){
+      const idx=s.indexOf(name,from); if(idx<0) break;
+      const after=s.slice(idx+name.length).match(/^\s*\(/); if(!after){from=idx+name.length;continue;}
+      const openIdx=idx+name.length+after[0].lastIndexOf('(');
+      const end=balancedAt(s,openIdx); if(end<0){from=idx+name.length;continue;}
+      const pre=s.slice(Math.max(0,idx-100),idx);
+      const rm=pre.match(/((?:this|[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)*)\.\s*$/);
+      const args=splitArgs(s.slice(openIdx+1,end));
+      out.push({callee:name,receiver:rm?rm[1]:null,argCount:args.length,args:args.map(tokenShape),callHash:fnvText(s.slice(Math.max(0,idx-40),Math.min(s.length,end+40)))});
+      from=end+1;
+    }
+    return out;
+  }
+  function guardShapesFromRaw(raw){
+    const s=String(raw||''), out=[]; const re=/\bif\s*\(/g; let m;
+    while((m=re.exec(s))&&out.length<10){
+      const open=s.indexOf('(',m.index); const end=balancedAt(s,open); if(end<0) break;
+      const expr=s.slice(open+1,end);
+      if(/event|button|buttons|pointer|mouse|type|pressed/i.test(expr)) out.push(tokenShape(expr));
+      re.lastIndex=end+1;
+    }
+    return out;
   }
   function functionMeta(fn){
     if(typeof fn!=='function') return null;
@@ -1332,13 +1391,37 @@ function installMouseTransportObserverPage() {
       functionName:fn.name||null,argCount:Number.isFinite(fn.length)?fn.length:null,
       sourceHash:fnvText(raw),sourceLength:raw.length,params,
       containsSendMouseButtonEvent:raw.includes('sendMouseButtonEvent'),
-      containsPointerdown:raw.includes('pointerdown'),containsPointerup:raw.includes('pointerup'),
-      containsButtonToken:/\bbutton\b/.test(raw)
+      containsPointerdown:raw.includes('pointerdown'),containsPointerup:raw.includes('pointerup'),containsButtonToken:/\bbutton\b/.test(raw),
+      senderCalls:callShapesFromRaw(raw,'sendMouseButtonEvent'),guards:guardShapesFromRaw(raw)
     };
+  }
+  function scanTargetForSender(target,itemId){
+    const found=[]; const seen=new Set(); let obj=target,depth=0;
+    while(obj&&depth<6&&found.length<12){
+      let keys=[]; try { keys=Object.getOwnPropertyNames(obj).slice(0,600); } catch { break; }
+      for(const key of keys){
+        if(seen.has(key+'@'+depth)) continue; seen.add(key+'@'+depth);
+        let v; try { v=obj[key]; } catch { continue; }
+        if(typeof v!=='function') continue;
+        const meta=functionMeta(v); const n=meta?.functionName||'';
+        if(key==='sendMouseButtonEvent'||n==='sendMouseButtonEvent'||key==='getMouseButtonEvent'||n==='getMouseButtonEvent'||key==='handlePointerMouseButtonEvent'||n==='handlePointerMouseButtonEvent'){
+          const ref={listenerId:itemId,target:targetLabel(target),depth,key,functionName:n||null,meta}; found.push(ref);
+          state.targetRefObjects.push({listenerId:itemId,target,owner:obj,key,fn:v,depth});
+        }
+      }
+      try { obj=Object.getPrototypeOf(obj); } catch { break; } depth++;
+    }
+    for(const f of found){
+      const key=[f.target,f.depth,f.key,f.functionName].join('|');
+      if(!state.targetSenderRefs.some(x=>[x.target,x.depth,x.key,x.functionName].join('|')===key)) state.targetSenderRefs.push(f);
+    }
+    if(state.targetSenderRefs.length>16) state.targetSenderRefs=state.targetSenderRefs.slice(-16);
+    state.targetSenderRefsFound=state.targetSenderRefs.filter(x=>x.key==='sendMouseButtonEvent'||x.functionName==='sendMouseButtonEvent').length;
+    return found;
   }
   function observeAddEventListener(){
     const proto=globalThis.EventTarget?.prototype; if(!proto||typeof proto.addEventListener!=='function') return false;
-    const current=proto.addEventListener; if(current?.__bcsRc12SenderRefObserver===true) return true;
+    const current=proto.addEventListener; if(current?.__bcsRc13HandlerShapeObserver===true) return true;
     const original=current;
     const wrapped=function(type,listener,options){
       try {
@@ -1347,10 +1430,12 @@ function installMouseTransportObserverPage() {
           state.pointerListenerRegistrations++;
           const fn=typeof listener==='function'?listener:listener.handleEvent;
           const meta=functionMeta(fn);
-          const candidate=!!meta && (meta.functionName==='handlePointerMouseButtonEvent'||meta.containsSendMouseButtonEvent||/pointer.*mouse.*button/i.test(meta.functionName||''));
+          const candidate=!!meta && (meta.functionName==='handlePointerMouseButtonEvent'||meta.functionName==='getMouseButtonEvent'||meta.containsSendMouseButtonEvent||/pointer.*mouse.*button/i.test(meta.functionName||''));
           if(candidate){
             state.pointerHandlerCandidates++;
-            const item={id:'L'+(state.listenerCandidates.length+1),eventType:t,target:targetLabel(this),capture:options===true||options?.capture===true,meta};
+            const item={id:'L'+(state.listenerCandidates.length+1),eventType:t,target:targetLabel(this),capture:options===true||options?.capture===true,meta,targetRefs:[]};
+            if(meta.senderCalls?.length) state.listenerCallShapesFound+=meta.senderCalls.length;
+            item.targetRefs=scanTargetForSender(this,item.id);
             state.listenerCandidates.push(item); if(state.listenerCandidates.length>24) state.listenerCandidates.shift();
             state.listenerRefs.push({id:item.id,eventType:t,target:this,listener,fn}); if(state.listenerRefs.length>24) state.listenerRefs.shift();
           }
@@ -1358,21 +1443,28 @@ function installMouseTransportObserverPage() {
       } catch {}
       return Reflect.apply(original,this,arguments);
     };
-    try { Object.defineProperty(wrapped,'__bcsRc12SenderRefObserver',{value:true}); Object.defineProperty(wrapped,'__bcsOriginal',{value:original}); } catch {}
-    try { proto.addEventListener=wrapped; return proto.addEventListener===wrapped||proto.addEventListener?.__bcsRc12SenderRefObserver===true; } catch { return false; }
+    try { Object.defineProperty(wrapped,'__bcsRc13HandlerShapeObserver',{value:true}); Object.defineProperty(wrapped,'__bcsOriginal',{value:original}); } catch {}
+    try { proto.addEventListener=wrapped; return proto.addEventListener===wrapped||proto.addEventListener?.__bcsRc13HandlerShapeObserver===true; } catch { return false; }
+  }
+  function refreshListenerAnalysis(){
+    state.listenerCallShapesFound=0; state.targetSenderRefs=[]; state.targetRefObjects=[]; state.targetSenderRefsFound=0;
+    for(const ref of state.listenerRefs){
+      const item=state.listenerCandidates.find(x=>x.id===ref.id); if(!item) continue;
+      item.meta=functionMeta(ref.fn); if(item.meta?.senderCalls?.length) state.listenerCallShapesFound+=item.meta.senderCalls.length;
+      item.targetRefs=scanTargetForSender(ref.target,ref.id);
+    }
   }
   function correlation(nowMs){ const m=state.lastDom; if(!m) return null; const delta=nowMs-Number(m.perfNowMs); if(!Number.isFinite(delta)||delta<0||delta>state.correlationMs) return null; return {mark:m,deltaMs:delta}; }
-  function emit(detail){ try { document.dispatchEvent(new CustomEvent(OBS,{detail:Object.assign({schemaVersion:5},detail)})); } catch {} }
+  function emit(detail){ try { document.dispatchEvent(new CustomEvent(OBS,{detail:Object.assign({schemaVersion:6},detail)})); } catch {} }
   function isButton(v){ return v?.type==='mouse'&&v?.action==='button'&&(v?.btn===0||v?.btn===2)&&typeof v?.isPressed==='boolean'; }
   function isMove(v){ return v?.type==='mouse'&&v?.action==='move'; }
   function wrapRtc(){
     const proto=globalThis.RTCDataChannel?.prototype; if(!proto||typeof proto.send!=='function') return false;
-    const current=proto.send; if(current&&current.__bcsRc12NativeSenderReference===true) return true;
+    const current=proto.send; if(current&&current.__bcsRc13NativeHandlerShape===true) return true;
     const original=current;
     const wrapped=function(data){
       if(!state.active) return Reflect.apply(original,this,arguments);
-      const label=this?.label||null;
-      if(label!=='ClientDataChannel') return Reflect.apply(original,this,arguments);
+      const label=this?.label||null; if(label!=='ClientDataChannel') return Reflect.apply(original,this,arguments);
       const at=performance.now(); state.totalSends++; state.clientDataChannelSeen=true;
       const parsed=parseJson(data); let packetKind='OTHER',button=null,move=null,stack=null;
       if(isButton(parsed)){
@@ -1394,38 +1486,8 @@ function installMouseTransportObserverPage() {
         throw err;
       }
     };
-    try { Object.defineProperty(wrapped,'__bcsRc12NativeSenderReference',{value:true}); Object.defineProperty(wrapped,'__bcsOriginal',{value:original}); } catch {}
-    try { proto.send=wrapped; return proto.send===wrapped||proto.send?.__bcsRc12NativeSenderReference===true; } catch { return false; }
-  }
-  function splitArgs(text){
-    const out=[]; let cur='',depth=0,quote=null,esc=false;
-    for(const ch of String(text||'')){
-      if(quote){ cur+=ch; if(esc){esc=false;continue;} if(ch==='\\'){esc=true;continue;} if(ch===quote) quote=null; continue; }
-      if(ch==='"'||ch==="'"){quote=ch;cur+=ch;continue;}
-      if(ch==='('||ch==='['||ch==='{'){depth++;cur+=ch;continue;}
-      if(ch===')'||ch===']'||ch==='}'){depth=Math.max(0,depth-1);cur+=ch;continue;}
-      if(ch===','&&depth===0){out.push(cur.trim());cur='';continue;} cur+=ch;
-    }
-    if(cur.trim()) out.push(cur.trim()); return out.slice(0,8);
-  }
-  function argShape(expr){
-    const s=String(expr||'').trim(); const ids=[...new Set((s.match(/[A-Za-z_$][\w$]*/g)||[]).slice(0,20))];
-    const literals=[]; for(const m of s.matchAll(/["']([^"']{0,40})["']/g)){ if(['pointerdown','pointerup','mousedown','mouseup','mouse','button'].includes(m[1])) literals.push(m[1]); }
-    return {length:s.length,hash:fnvText(s),identifiers:ids,literals:[...new Set(literals)]};
-  }
-  function callShapeFromSegment(segment,name){
-    const s=String(segment||''); let from=0;
-    while(true){
-      const idx=s.indexOf(name+'(',from); if(idx<0) return null;
-      let i=idx+name.length+1,depth=1,quote=null,esc=false;
-      for(;i<s.length;i++){
-        const ch=s[i];
-        if(quote){ if(esc){esc=false;continue;} if(ch==='\\'){esc=true;continue;} if(ch===quote) quote=null; continue; }
-        if(ch==='"'||ch==="'"){quote=ch;continue;}
-        if(ch==='(') depth++; else if(ch===')'){depth--; if(depth===0){ const argsText=s.slice(idx+name.length+1,i); const args=splitArgs(argsText); return {callee:name,argCount:args.length,args:args.map(argShape)}; }}
-      }
-      from=idx+name.length;
-    }
+    try { Object.defineProperty(wrapped,'__bcsRc13NativeHandlerShape',{value:true}); Object.defineProperty(wrapped,'__bcsOriginal',{value:original}); } catch {}
+    try { proto.send=wrapped; return proto.send===wrapped||proto.send?.__bcsRc13NativeHandlerShape===true; } catch { return false; }
   }
   function parameterListNear(text,name){
     const s=String(text||''); const re=new RegExp('(?:function\\s+)?'+name+'\\s*[:=]?\\s*(?:function\\s*)?\\(([^)]*)\\)','m');
@@ -1434,54 +1496,33 @@ function installMouseTransportObserverPage() {
   }
   async function inspectCatchEventsSource(){
     state.sourceInspections++;
-    const finding={source:location.origin+'/static/streaming/catch-events.js',fetched:false,bytes:null,hash:null,definitions:[],handlerCallShape:null,error:null};
+    const finding={source:location.origin+'/static/streaming/catch-events.js',fetched:false,bytes:null,hash:null,definitions:[],error:null};
     try {
-      const res=await fetch('/static/streaming/catch-events.js',{credentials:'same-origin',cache:'no-store'});
-      if(!res.ok) throw new Error('HTTP_'+res.status);
+      const res=await fetch('/static/streaming/catch-events.js',{credentials:'same-origin',cache:'no-store'}); if(!res.ok) throw new Error('HTTP_'+res.status);
       const txt=await res.text(); finding.fetched=true; finding.bytes=txt.length; finding.hash=fnvText(txt);
-      for(const name of ['sendMouseButtonEvent','handlePointerMouseButtonEvent','sendRttEvent','_sendBatchedMouseMove']){
+      for(const name of ['sendMouseButtonEvent','getMouseButtonEvent','handlePointerMouseButtonEvent','sendRttEvent','_sendBatchedMouseMove']){
         const idx=txt.indexOf(name); if(idx<0) continue;
-        const line=txt.slice(0,idx).split('\n').length;
-        const segment=txt.slice(Math.max(0,idx-240),Math.min(txt.length,idx+2600));
-        const params=parameterListNear(segment,name);
-        const def={name,line,params,paramCount:params.length,segmentHash:fnvText(segment)};
-        finding.definitions.push(def);
+        const line=txt.slice(0,idx).split('\n').length; const segment=txt.slice(Math.max(0,idx-240),Math.min(txt.length,idx+2600));
+        const params=parameterListNear(segment,name); finding.definitions.push({name,line,params,paramCount:params.length,segmentHash:fnvText(segment)});
         if(name==='sendMouseButtonEvent') state.senderDefinitionsFound++;
-        if(name==='handlePointerMouseButtonEvent'){
-          const handlerBodyWindow=txt.slice(idx+name.length,Math.min(txt.length,idx+name.length+2600));
-          const shape=callShapeFromSegment(handlerBodyWindow,'sendMouseButtonEvent');
-          if(shape){ finding.handlerCallShape=shape; state.senderCallShapesFound++; }
-        }
       }
     } catch(e){ finding.error=String(e?.message||e).slice(0,120); }
-    state.sourceFindings=[finding];
-    emit(discoveryView());
+    state.sourceFindings=[finding]; emit(discoveryView());
   }
   function scanGlobals(){
-    const found=[]; const seen=new WeakSet(); const roots=[{path:'window',value:window}];
-    let inspected=0;
+    const found=[]; const seen=new WeakSet(); const roots=[{path:'window',value:window}]; let inspected=0;
     for(let ri=0;ri<roots.length&&ri<300;ri++){
-      const {path,value}=roots[ri]; if(!value||(typeof value!=='object'&&typeof value!=='function')) continue;
-      if(seen.has(value)) continue; seen.add(value);
+      const {path,value}=roots[ri]; if(!value||(typeof value!=='object'&&typeof value!=='function')) continue; if(seen.has(value)) continue; seen.add(value);
       let keys=[]; try { keys=Object.getOwnPropertyNames(value).slice(0,500); } catch { continue; }
       for(const key of keys){
-        if(++inspected>6000) break;
-        let v; try { v=value[key]; } catch { continue; }
-        const p=path+'.'+key;
+        if(++inspected>6000) break; let v; try { v=value[key]; } catch { continue; } const p=path+'.'+key;
         if(typeof v==='function'){
-          const meta=functionMeta(v);
-          if(TARGET_NAMES.includes(key)||TARGET_NAMES.includes(meta?.functionName||'')){
-            found.push({path:p,key,meta}); state.globalRefObjects.push({path:p,fn:v,owner:value,key});
-            if(found.length>=12) break;
-          }
-        } else if(ri<40 && v && typeof v==='object' && !(v instanceof Node) && v!==window && v!==document){
-          roots.push({path:p,value:v});
-        }
+          const meta=functionMeta(v); if(TARGET_NAMES.includes(key)||TARGET_NAMES.includes(meta?.functionName||'')){ found.push({path:p,key,meta}); state.globalRefObjects.push({path:p,fn:v,owner:value,key}); if(found.length>=12) break; }
+        } else if(ri<40 && v && typeof v==='object' && !(v instanceof Node) && v!==window && v!==document){ roots.push({path:p,value:v}); }
       }
       if(inspected>6000||found.length>=12) break;
     }
-    state.globalSenderRefs=found; state.globalSenderRefsFound=found.filter(x=>x.key==='sendMouseButtonEvent'||x.meta?.functionName==='sendMouseButtonEvent').length;
-    emit(discoveryView());
+    state.globalSenderRefs=found; state.globalSenderRefsFound=found.filter(x=>x.key==='sendMouseButtonEvent'||x.meta?.functionName==='sendMouseButtonEvent').length; emit(discoveryView());
   }
   function ensureHooks(){
     try { state.hooks.addEventListener=observeAddEventListener()||state.hooks.addEventListener; } catch {}
@@ -1489,22 +1530,22 @@ function installMouseTransportObserverPage() {
     state.installed=state.hooks.rtcDataChannel&&state.hooks.addEventListener;
   }
   function discoveryView(){
-    return {kind:'DISCOVERY',installed:state.installed,hooks:{...state.hooks},active:state.active,totalSends:state.totalSends,correlatedSends:state.correlatedSends,clientDataChannelSeen:state.clientDataChannelSeen,buttonPackets:state.buttonPackets,movePackets:state.movePackets,buttonStacksCaptured:state.buttonStacksCaptured,moveStacksCaptured:state.moveStacksCaptured,pointerListenerRegistrations:state.pointerListenerRegistrations,pointerHandlerCandidates:state.pointerHandlerCandidates,sourceInspections:state.sourceInspections,senderDefinitionsFound:state.senderDefinitionsFound,senderCallShapesFound:state.senderCallShapesFound,globalSenderRefsFound:state.globalSenderRefsFound,listenerCandidates:state.listenerCandidates.slice(-24),sourceFindings:state.sourceFindings.slice(-12),globalSenderRefs:state.globalSenderRefs.slice(-12)};
+    return {kind:'DISCOVERY',installed:state.installed,hooks:{...state.hooks},active:state.active,totalSends:state.totalSends,correlatedSends:state.correlatedSends,clientDataChannelSeen:state.clientDataChannelSeen,buttonPackets:state.buttonPackets,movePackets:state.movePackets,buttonStacksCaptured:state.buttonStacksCaptured,moveStacksCaptured:state.moveStacksCaptured,pointerListenerRegistrations:state.pointerListenerRegistrations,pointerHandlerCandidates:state.pointerHandlerCandidates,sourceInspections:state.sourceInspections,senderDefinitionsFound:state.senderDefinitionsFound,senderCallShapesFound:state.senderCallShapesFound,globalSenderRefsFound:state.globalSenderRefsFound,listenerCallShapesFound:state.listenerCallShapesFound,targetSenderRefsFound:state.targetSenderRefsFound,listenerCandidates:state.listenerCandidates.slice(-24),sourceFindings:state.sourceFindings.slice(-12),globalSenderRefs:state.globalSenderRefs.slice(-12),targetSenderRefs:state.targetSenderRefs.slice(-16)};
   }
   function stateView(active){ const v=discoveryView(); v.kind='STATE'; v.active=!!active; return v; }
   ensureHooks();
   document.addEventListener(CTRL,e=>{
     const d=e?.detail||{};
     if(d.action==='START'){
-      ensureHooks(); state.active=true; state.seq=0; state.lastDom=null; state.totalSends=0; state.correlatedSends=0; state.clientDataChannelSeen=false; state.buttonPackets=0; state.movePackets=0; state.buttonStacksCaptured=0; state.moveStacksCaptured=0; state.sourceInspections=0; state.senderDefinitionsFound=0; state.senderCallShapesFound=0; state.globalSenderRefsFound=0; state.sourceFindings=[]; state.globalSenderRefs=[]; state.globalRefObjects=[]; state.correlationMs=Number(d.correlationMs)||state.correlationMs; emit(stateView(true)); queueMicrotask(()=>{scanGlobals(); void inspectCatchEventsSource();}); return;
+      ensureHooks(); refreshListenerAnalysis(); state.active=true; state.seq=0; state.lastDom=null; state.totalSends=0; state.correlatedSends=0; state.clientDataChannelSeen=false; state.buttonPackets=0; state.movePackets=0; state.buttonStacksCaptured=0; state.moveStacksCaptured=0; state.sourceInspections=0; state.senderDefinitionsFound=0; state.senderCallShapesFound=0; state.globalSenderRefsFound=0; state.sourceFindings=[]; state.globalSenderRefs=[]; state.globalRefObjects=[]; state.correlationMs=Number(d.correlationMs)||state.correlationMs; emit(stateView(true)); queueMicrotask(()=>{scanGlobals(); refreshListenerAnalysis(); emit(discoveryView()); void inspectCatchEventsSource();}); return;
     }
     if(d.action==='MARK'&&state.active){ state.lastDom=d.mark||null; state.correlationMs=Number(d.correlationMs)||state.correlationMs; return; }
-    if(d.action==='STOP'){ state.active=false; emit(stateView(false)); state.lastDom=null; return; }
+    if(d.action==='STOP'){ state.active=false; refreshListenerAnalysis(); emit(stateView(false)); state.lastDom=null; return; }
     if(d.action==='STATE') emit(stateView(state.active));
   },true);
   emit(Object.assign({kind:'READY'},discoveryView(),{kind:'READY',active:false}));
 })();
-//# sourceURL=bcs-rc12-native-sender-reference.js`;
+//# sourceURL=bcs-rc13-native-handler-shape.js`;
   try {
     const sc=document.createElement('script'); sc.textContent=source;
     (document.documentElement || document.head || document).appendChild(sc); sc.remove();
@@ -1516,20 +1557,20 @@ function setMouseTransportProbeEnabled(enabled, reason='UI') {
   if (enabled) {
     resetMouseTransportTelemetry(); M.enabled=true; M.startedAtSec=round(elapsed(),3); M.stoppedAtSec=null;
     M.inputProbeOwned=!S.inputProbe.enabled;
-    if (M.inputProbeOwned) setInputProbeEnabled(true,'RC12_NATIVE_SENDER_REFERENCE_DISCOVERY');
+    if (M.inputProbeOwned) setInputProbeEnabled(true,'RC13_NATIVE_HANDLER_CALL_SHAPE_DISCOVERY');
     dispatchMouseTransportControl({action:'START',correlationMs:MOUSE_TRANSPORT_CORRELATION_MS});
     if (M.autoStopTimer) clearTimeout(M.autoStopTimer);
     M.autoStopTimer=setTimeout(()=>setMouseTransportProbeEnabled(false,'AUTO_TIMEOUT'),MOUSE_TRANSPORT_AUTO_STOP_MS);
-    pushMouseTransportEvent('MOUSE_SENDER_REFERENCE_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS},true);
-    addEvent('MOUSE_SENDER_REFERENCE_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS});
+    pushMouseTransportEvent('MOUSE_HANDLER_CALL_SHAPE_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS},true);
+    addEvent('MOUSE_HANDLER_CALL_SHAPE_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS});
   } else {
     dispatchMouseTransportControl({action:'STOP'});
-    pushMouseTransportEvent('MOUSE_SENDER_REFERENCE_DISCOVERY_STOP',{reason},true);
+    pushMouseTransportEvent('MOUSE_HANDLER_CALL_SHAPE_DISCOVERY_STOP',{reason},true);
     M.enabled=false; M.stoppedAtSec=round(elapsed(),3);
     if (M.autoStopTimer) { clearTimeout(M.autoStopTimer); M.autoStopTimer=null; }
-    if (M.inputProbeOwned && S.inputProbe.enabled) setInputProbeEnabled(false,'RC12_NATIVE_SENDER_REFERENCE_DISCOVERY_STOP');
+    if (M.inputProbeOwned && S.inputProbe.enabled) setInputProbeEnabled(false,'RC13_NATIVE_HANDLER_CALL_SHAPE_DISCOVERY_STOP');
     M.inputProbeOwned=false;
-    addEvent('MOUSE_SENDER_REFERENCE_DISCOVERY_STOP',{reason,eventCount:M.events.count,buttonStacksCaptured:M.counters.buttonStacksCaptured});
+    addEvent('MOUSE_HANDLER_CALL_SHAPE_DISCOVERY_STOP',{reason,eventCount:M.events.count,buttonStacksCaptured:M.counters.buttonStacksCaptured});
   }
   updateUI();
 }
@@ -1540,55 +1581,56 @@ function buildMouseTransportAnalysis(events) {
   const required=['LMB_DOWN_SINGLE','LMB_UP_SINGLE','RMB_DOWN_SINGLE','RMB_UP_SINGLE'];
   const present=[...new Set(buttons.map(e=>e.case).filter(c=>required.includes(c)))];
   function findFrame(name){
-    for(const e of buttons){
-      const f=e.stack?.frames?.find(x=>x.functionName===name||String(x.functionName||'').endsWith('.'+name));
-      if(f) return f;
-    }
+    for(const e of buttons){ const f=e.stack?.frames?.find(x=>x.functionName===name||String(x.functionName||'').endsWith('.'+name)); if(f) return f; }
     return null;
   }
   const nativeButtonFrame=findFrame('sendMouseButtonEvent');
   const nativeHandlerFrame=findFrame('handlePointerMouseButtonEvent');
   const sourceFinding=S.mouseTransport.pageObserver.sourceFindings?.find(x=>x?.fetched)||null;
-  const callShape=sourceFinding?.handlerCallShape||null;
   const listenerCandidates=S.mouseTransport.pageObserver.listenerCandidates||[];
   const directRefs=S.mouseTransport.pageObserver.globalSenderRefs||[];
+  const targetRefs=S.mouseTransport.pageObserver.targetSenderRefs||[];
+  const callShapes=[];
+  for(const l of listenerCandidates){ for(const c of (l?.meta?.senderCalls||[])) callShapes.push({listenerId:l.id,eventType:l.eventType,functionName:l.meta?.functionName||null,...c}); }
+  const guards=[];
+  for(const l of listenerCandidates){ for(const g of (l?.meta?.guards||[])) guards.push({listenerId:l.id,eventType:l.eventType,functionName:l.meta?.functionName||null,shape:g}); }
+  const senderTargetRefs=targetRefs.filter(x=>x?.key==='sendMouseButtonEvent'||x?.functionName==='sendMouseButtonEvent');
   let classification='INCONCLUSIVE';
   if(!S.mouseTransport.pageObserver.installed) classification='OBSERVATION_HOOKS_UNAVAILABLE';
   else if(!buttons.length) classification='NO_NATIVE_MOUSE_BUTTON_PACKETS_CAPTURED';
   else if(!nativeButtonFrame) classification='BUTTON_STACK_CAPTURED__SEND_MOUSE_BUTTON_FRAME_MISSING';
-  else if(sourceFinding?.fetched && callShape) classification='NATIVE_SENDER_SIGNATURE_AND_CALL_SHAPE_CAPTURED';
-  else if(sourceFinding?.error) classification='NATIVE_BUTTON_PIPELINE_CONFIRMED__SOURCE_INSPECTION_FAILED';
-  else classification='NATIVE_BUTTON_PIPELINE_CONFIRMED__ARGUMENT_SHAPE_PENDING';
+  else if(callShapes.length && senderTargetRefs.length) classification='NATIVE_HANDLER_CALL_SHAPE_AND_TARGET_SENDER_REF_CAPTURED';
+  else if(callShapes.length) classification='NATIVE_HANDLER_CALL_SHAPE_CAPTURED__TARGET_REF_PENDING';
+  else if(sourceFinding?.error) classification='NATIVE_BUTTON_PIPELINE_CONFIRMED__HANDLER_SOURCE_ANALYSIS_FAILED';
+  else classification='NATIVE_BUTTON_PIPELINE_CONFIRMED__HANDLER_CALL_SHAPE_PENDING';
   return {
     classification,requiredCases:required,presentCases:present,completeRequiredCases:required.every(c=>present.includes(c)),
     buttonPacketCount:buttons.length,moveSampleCount:moves.length,
     buttonStacksCaptured:S.mouseTransport.counters.buttonStacksCaptured,moveStacksCaptured:S.mouseTransport.counters.moveStacksCaptured,
     nativeFrames:{sendMouseButtonEvent:nativeButtonFrame,handlePointerMouseButtonEvent:nativeHandlerFrame},
-    pointerListenerCandidates:listenerCandidates,
-    directGlobalSenderRefs:directRefs,
-    sourceInspection:sourceFinding,
-    senderCallShape:callShape,
+    pointerListenerCandidates:listenerCandidates,handlerSenderCallShapes:callShapes,handlerGuardShapes:guards,
+    directGlobalSenderRefs:directRefs,targetSenderRefs:targetRefs,sourceInspection:sourceFinding,
     protocolEvidence:{type:'mouse',action:'button',buttonField:'btn',pressedField:'isPressed',leftButton:0,rightButton:2},
-    privacy:'No raw payload or raw Boosteroid source is exported. Function references remain page-memory only. Export contains names, file/line/column, hashes, parameter names and sanitized call-argument token shapes.',
-    caveat:'RC12 is observational only. Capturing a listener reference or call shape does not authorize invocation; LIVE fix remains deferred until the exact native entry point and arguments are verified.'
+    privacy:'No raw payload or raw Boosteroid source is exported. Function references remain page-memory only. Handler output is reduced to function metadata, receiver names, argument token shapes, guard token shapes and target/prototype method metadata.',
+    caveat:'RC13 is observational only. No captured function reference is invoked. LIVE correction remains deferred until receiver/arguments/guards are sufficiently verified.'
   };
 }
 
 function mouseTransportSnapshot() {
   const M=S.mouseTransport,events=M.events.toArray();
   return {
-    schemaVersion:5,mode:'H014C_NATIVE_SENDER_REFERENCE_ARGUMENTS_DISCOVERY',enabled:M.enabled,
+    schemaVersion:6,mode:'H014C_NATIVE_HANDLER_CALL_SHAPE_DISCOVERY',enabled:M.enabled,
     observationalOnly:true,manualDiagnosticGate:true,clientDataChannelOnly:true,
     rawPayloadCapture:false,rawSourceCapture:false,payloadMutation:false,newTransportSendInjection:false,
     syntheticMouseEvents:false,syntheticPointerEvents:false,stackCapture:true,
-    listenerRegistrationObservation:true,listenerInvocationWrapping:false,
-    functionReferencesExported:false,sameOriginSourceInspection:true,
+    listenerRegistrationObservation:true,listenerInvocationWrapping:false,functionReferencesExported:false,
+    functionSourceShapeInspection:true,targetPrototypeReferenceDiscovery:true,sameOriginSourceInspection:true,
     stackPrivacy:'BOOSTEROID_SCRIPT_PATH_FUNCTION_LINE_COLUMN__QUERY_STRIPPED',
     correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS,maxEvents:MAX_MOUSE_TRANSPORT_EVENTS,
     autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS,retainedEvents:M.events.count,
     overwrittenEvents:Math.max(0,M.events.total-M.events.count),startedAtSec:M.startedAtSec,stoppedAtSec:M.stoppedAtSec,
     counters:{...M.counters},pageObserver:{...M.pageObserver},analysis:buildMouseTransportAnalysis(events),
-    testProtocol:['start REF TESTE before immersive','enter immersive / pointer lock','LMB normal x2','RMB normal x2','wait 2s for source inspection','stop REF TESTE','export JSON'],events
+    testProtocol:['start SHAPE TESTE before immersive','enter immersive / pointer lock','LMB normal x2','RMB normal x2','wait 2s','stop SHAPE TESTE','export JSON'],events
   };
 }
 
@@ -5331,7 +5373,7 @@ function buildExport() {
       name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
       pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
       schemaVersion:2,
-      status:'V0.8.1_RC12__NATIVE_SENDER_REFERENCE_ARGUMENTS_DISCOVERY__NOT_CANONICAL'
+      status:'V0.8.1_RC13__NATIVE_HANDLER_CALL_SHAPE_DISCOVERY__NOT_CANONICAL'
     },
     exportedAt:new Date().toISOString(),
     environment:ENV,
@@ -5485,7 +5527,7 @@ function buildExport() {
       pageMethodOverrides:S.control.state==='ACTIVE' && (S.control.application?.patch?.patched||S.control.application?.patched) ? ['StreamDeviceContext.getSafeResolution','SessionHandler.getWindowResolution'] : [],
       exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
       controlModel:'PERSISTENT_AUTO_APPLY',
-      telemetryIntegrityModel:'RC12_NATIVE_SENDER_REFERENCE_ARGUMENTS_PLUS_RC11_PIPELINE_PLUS_RC7_IMMERSIVE_GAME_MODE',
+      telemetryIntegrityModel:'RC13_NATIVE_HANDLER_CALL_SHAPE_PLUS_RC12_SIGNATURE_PLUS_RC7_IMMERSIVE_GAME_MODE',
       legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
       longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls',
       telemetryIntegrity:{
@@ -5679,7 +5721,7 @@ function updateUI(sample = null) {
   const probeBtn=$('bcs-input-probe-toggle');
   if (probeBtn) probeBtn.textContent=P.enabled ? 'PARAR PROBE' : 'INICIAR PROBE';
   const mouseTransportBtn=$('bcs-mouse-transport-toggle');
-  if (mouseTransportBtn) mouseTransportBtn.textContent=M.enabled ? 'PARAR REF TESTE' : 'INICIAR REF TESTE';
+  if (mouseTransportBtn) mouseTransportBtn.textContent=M.enabled ? 'PARAR SHAPE TESTE' : 'INICIAR SHAPE TESTE';
   const immersiveBtn=$('bcs-immersive-toggle');
   if (immersiveBtn) {
     immersiveBtn.disabled=I.entering || I.exiting || !IS_STREAM_DOCUMENT;
@@ -5761,14 +5803,14 @@ html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display
     <div class="bcs-row"><span>Key↓ / Mouse↓ / Pointer↓</span><b id="bcs-input-counts">0/0/0</b></div>
     <div class="bcs-row"><span>Último evento</span><b id="bcs-input-last">--</b></div>
     <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-input-probe-toggle" class="bcs-btn">INICIAR PROBE</button></div>
-    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC12 não cria KeyboardEvent/MouseEvent/PointerEvent sintético.</div>
-    <div class="bcs-st">RC12 • NATIVE SENDER REF + ARGS</div>
-    <div class="bcs-row"><span>Ref teste</span><b id="bcs-mouse-transport-state">OFF</b></div>
+    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC13 não cria KeyboardEvent/MouseEvent/PointerEvent sintético.</div>
+    <div class="bcs-st">RC13 • NATIVE HANDLER CALL SHAPE</div>
+    <div class="bcs-row"><span>Shape teste</span><b id="bcs-mouse-transport-state">OFF</b></div>
     <div class="bcs-row"><span>Hook / canal</span><b id="bcs-mouse-transport-hooks">- / -</b></div>
-    <div class="bcs-row"><span>Stacks / handler refs</span><b id="bcs-mouse-transport-counts">0/0</b></div>
+    <div class="bcs-row"><span>Stacks / call-shapes</span><b id="bcs-mouse-transport-counts">0/0</b></div>
     <div class="bcs-row"><span>Diagnóstico</span><b id="bcs-mouse-transport-result">INCONCLUSIVE</b></div>
-    <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-mouse-transport-toggle" class="bcs-btn bcs-primary">INICIAR REF TESTE</button></div>
-    <div class="bcs-note">OBSERVACIONAL: inicie REF TESTE antes do modo imersivo; depois faça LMB normal x2 e RMB normal x2. RC12 observa registros de listeners, stack nativa e assinatura/call-shape sanitizada; não chama nem altera o sender.</div>
+    <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-mouse-transport-toggle" class="bcs-btn bcs-primary">INICIAR SHAPE TESTE</button></div>
+    <div class="bcs-note">OBSERVACIONAL: inicie SHAPE TESTE antes do modo imersivo; faça LMB normal x2 e RMB normal x2. RC13 extrai call-shape, guards e receiver/ref candidatos dos handlers já registrados; não chama nem altera o sender.</div>
   </div>
 
   <div class="bcs-card" id="bcs-analyzer-card">
@@ -5896,7 +5938,7 @@ function boot() {
   addEvent('SUITE_BOOT',{
     version:VERSION,
     build:BUILD,
-    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC12_NATIVE_SENDER_REFERENCE_ARGUMENTS_DISCOVERY__RC7_IMMERSIVE_GAME_MODE',
+    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC13_NATIVE_HANDLER_CALL_SHAPE_DISCOVERY__RC7_IMMERSIVE_GAME_MODE',
     controlModel:'PERSISTENT_AUTO_APPLY',
     profileEnabled:isAutoEnabled(),
     bootBehavior:isAutoEnabled() ? 'AUTO_APPLY_ENABLED' : 'SAFE',
