@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc14
-// @description  H-014C chorded mouse compatibility fix: reroutes only true second-button chord transitions through Boosteroid native pointer-button handler, preserving native id_cmd and dual transport.
+// @version      0.8.1-rc15
+// @description  H-014C direct compatibility-guard bypass: preserves Boosteroid native mouse handler/transport while allowing only true chorded second-button edges through the 500 ms compatibility filter.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc14';
-const BUILD = 'Chorded Mouse Compatibility Fix + Immersive Game Mode + Telemetry Integrity - RC14';
+const VERSION = '0.8.1-rc15';
+const BUILD = 'Direct Compatibility Guard Bypass + Immersive Game Mode + Telemetry Integrity - RC15';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -35,8 +35,8 @@ const MOUSE_TRANSPORT_AUTO_STOP_MS = 30 * 1000;
 const MOUSE_TRANSPORT_CORRELATION_MS = 120;
 const MOUSE_TRANSPORT_CONTROL_EVENT = '__BCS_RC13_NATIVE_HANDLER_SHAPE_CONTROL__';
 const MOUSE_TRANSPORT_OBS_EVENT = '__BCS_RC13_NATIVE_HANDLER_SHAPE_OBS__';
-const CHORD_FIX_CONTROL_EVENT = '__BCS_RC14_CHORDED_MOUSE_FIX_CONTROL__';
-const CHORD_FIX_OBS_EVENT = '__BCS_RC14_CHORDED_MOUSE_FIX_OBS__';
+const CHORD_FIX_CONTROL_EVENT = '__BCS_RC15_CHORDED_MOUSE_FIX_CONTROL__';
+const CHORD_FIX_OBS_EVENT = '__BCS_RC15_CHORDED_MOUSE_FIX_OBS__';
 const MAX_CHORD_FIX_EVENTS = 256;
 const CHORD_FIX_CORRELATION_MS = 120;
 const IMMERSIVE_KEY_CODES = Object.freeze(['Escape','Tab']);
@@ -519,8 +519,8 @@ const S = {
   mouseChordFix: {
     enabled:false,
     installed:false,
-    pointerHandlerCaptured:false,
-    mouseHandlerWrapped:false,
+    eventHandlerResolved:false,
+    guardPatched:false,
     wsHook:false,
     rtcHook:false,
     startedAtSec:null,
@@ -528,8 +528,7 @@ const S = {
     events:new Ring(MAX_CHORD_FIX_EVENTS),
     lastEvent:null,
     counters:{
-      handlerRegistrations:0,pointerHandlerCaptures:0,mouseHandlerWraps:0,
-      chordCandidates:0,rerouted:0,noPointerHandler:0,adapterErrors:0,handlerErrors:0,
+      patchAttempts:0,patchErrors:0,guardCalls:0,chordCandidates:0,guardBypasses:0,
       wsButtonMatches:0,rtcButtonMatches:0,pairedSameIdCmd:0,pairedDifferentIdCmd:0,incompletePairs:0
     },
     caseCounts:{
@@ -1661,15 +1660,16 @@ function mouseTransportSnapshot() {
 }
 
 // -----------------------------------------------------------------------------
-// CHORDED MOUSE COMPATIBILITY FIX - RC14 / H-014C
-// Snapshot audit of catch-events.js v3.7.19.1.1 proved the Android path keeps
-// pointerdown/up AND mousedown/up handlers, but suppresses compatibility mouse
-// events for 500 ms after pointer mouse activity. Chorded second-button edges do
-// not get a second pointerdown/up, therefore the only real edge is mousedown/up
-// and Boosteroid discards it. RC14 reroutes ONLY the four true chord transitions
-// through Boosteroid's already-registered handlePointerMouseButtonEvent function.
-// It does not fabricate transport packets or id_cmd. The native sender remains
-// responsible for WebSocket + ClientDataChannel delivery.
+// DIRECT CHORDED-MOUSE COMPATIBILITY GUARD BYPASS - RC15 / H-014C
+// Full client snapshot proved Boosteroid keeps both Pointer Events and classic
+// Mouse Events on Android, then suppresses mousedown/up for 500 ms after pointer
+// mouse activity. The second physical button in a chord has no second pointerdown,
+// so the native mousedown/up is the only edge and is incorrectly filtered.
+// RC15 patches ONLY EventHandler.shouldIgnoreMouseCompatibilityEvent: if the
+// ORIGINAL native guard would suppress one of the four true chord transitions,
+// RC15 returns false and lets Boosteroid's untouched getMouseButtonEvent continue
+// into sendMouseButtonEvent(event, event.type === "mousedown"). No pointer-handler
+// reroute, no compatibility-window refresh, no transport mutation, no id_cmd work.
 // -----------------------------------------------------------------------------
 function pushChordFixEvent(type,data={},force=false){
   const F=S.mouseChordFix;
@@ -1681,7 +1681,7 @@ function pushChordFixEvent(type,data={},force=false){
 function resetChordFixTelemetry(){
   const F=S.mouseChordFix;
   F.events.clear(); F.lastEvent=null; F.lastPair=null;
-  F.counters={handlerRegistrations:0,pointerHandlerCaptures:0,mouseHandlerWraps:0,chordCandidates:0,rerouted:0,noPointerHandler:0,adapterErrors:0,handlerErrors:0,wsButtonMatches:0,rtcButtonMatches:0,pairedSameIdCmd:0,pairedDifferentIdCmd:0,incompletePairs:0};
+  F.counters={patchAttempts:0,patchErrors:0,guardCalls:0,chordCandidates:0,guardBypasses:0,wsButtonMatches:0,rtcButtonMatches:0,pairedSameIdCmd:0,pairedDifferentIdCmd:0,incompletePairs:0};
   F.caseCounts={LMB_DOWN_WHILE_RMB:0,LMB_UP_WHILE_RMB:0,RMB_DOWN_WHILE_LMB:0,RMB_UP_WHILE_LMB:0};
 }
 
@@ -1693,31 +1693,28 @@ function dispatchChordFixControl(detail){
 function syncChordFixState(detail){
   const F=S.mouseChordFix;
   F.installed=detail.installed===true;
-  F.pointerHandlerCaptured=detail.pointerHandlerCaptured===true;
-  F.mouseHandlerWrapped=detail.mouseHandlerWrapped===true;
+  F.eventHandlerResolved=detail.eventHandlerResolved===true;
+  F.guardPatched=detail.guardPatched===true;
   F.wsHook=detail.hooks?.webSocket===true;
   F.rtcHook=detail.hooks?.rtcDataChannel===true;
   if(detail.counters && typeof detail.counters==='object') F.counters={...F.counters,...detail.counters};
   if(detail.caseCounts && typeof detail.caseCounts==='object') F.caseCounts={...F.caseCounts,...detail.caseCounts};
-  if(detail.lastPair) F.lastPair=detail.lastPair;
   if(detail.kind==='PAIR') F.lastPair={seq:detail.seq??null,case:detail.case||null,button:Number.isFinite(detail.button)?detail.button:null,pressed:typeof detail.pressed==='boolean'?detail.pressed:null,ws:detail.ws||null,rtc:detail.rtc||null,sameIdCmd:detail.sameIdCmd??null,error:detail.error||null};
   F.pageState=detail.kind||F.pageState;
 }
 
 function onChordFixObservation(e){
   const d=e?.detail;
-  if(!d || d.schemaVersion!==1) return;
+  if(!d || d.schemaVersion!==2) return;
   syncChordFixState(d);
-  if(d.kind==='CORRECTION' || d.kind==='PAIR' || d.kind==='ERROR' || d.kind==='HANDLER_CAPTURE') {
+  if(d.kind==='BYPASS' || d.kind==='PAIR' || d.kind==='ERROR' || d.kind==='PATCHED') {
     pushChordFixEvent('CHORD_FIX_'+d.kind,{
       case:d.case||null,eventType:d.eventType||null,button:Number.isFinite(d.button)?d.button:null,
       buttons:Number.isFinite(d.buttons)?d.buttons:null,pressed:typeof d.pressed==='boolean'?d.pressed:null,
       seq:d.seq??null,ws:d.ws||null,rtc:d.rtc||null,sameIdCmd:d.sameIdCmd??null,error:d.error||null
     },true);
   } else if(d.kind==='READY' || d.kind==='STATE') {
-    pushChordFixEvent('CHORD_FIX_'+d.kind,{
-      enabled:d.enabled===true,pointerHandlerCaptured:d.pointerHandlerCaptured===true,mouseHandlerWrapped:d.mouseHandlerWrapped===true,hooks:d.hooks||null
-    },true);
+    pushChordFixEvent('CHORD_FIX_'+d.kind,{enabled:d.enabled===true,eventHandlerResolved:d.eventHandlerResolved===true,guardPatched:d.guardPatched===true,hooks:d.hooks||null},true);
   }
   updateUI();
 }
@@ -1726,36 +1723,29 @@ function installMouseChordFixPage(){
   document.addEventListener(CHORD_FIX_OBS_EVENT,onChordFixObservation,true);
   const source=`(() => {
 'use strict';
-if(window.__BCS_RC14_CHORDED_MOUSE_FIX__) return;
-window.__BCS_RC14_CHORDED_MOUSE_FIX__=true;
+if(window.__BCS_RC15_CHORDED_MOUSE_FIX__) return;
+window.__BCS_RC15_CHORDED_MOUSE_FIX__=true;
 const CONTROL=${JSON.stringify(CHORD_FIX_CONTROL_EVENT)};
 const OBS=${JSON.stringify(CHORD_FIX_OBS_EVENT)};
 const CORR_MS=${CHORD_FIX_CORRELATION_MS};
-const nativeAdd=EventTarget.prototype.addEventListener;
-const nativeRemove=EventTarget.prototype.removeEventListener;
 const nativeWsSend=(typeof WebSocket!=='undefined'&&WebSocket.prototype)?WebSocket.prototype.send:null;
 const nativeRtcSend=(typeof RTCDataChannel!=='undefined'&&RTCDataChannel.prototype)?RTCDataChannel.prototype.send:null;
-const state={enabled:false,installed:true,pointerHandler:null,pointerHandlerCaptured:false,mouseHandlerWrapped:false,hooks:{webSocket:!!nativeWsSend,rtcDataChannel:!!nativeRtcSend},seq:0,pending:[],counters:{handlerRegistrations:0,pointerHandlerCaptures:0,mouseHandlerWraps:0,chordCandidates:0,rerouted:0,noPointerHandler:0,adapterErrors:0,handlerErrors:0,wsButtonMatches:0,rtcButtonMatches:0,pairedSameIdCmd:0,pairedDifferentIdCmd:0,incompletePairs:0},caseCounts:{LMB_DOWN_WHILE_RMB:0,LMB_UP_WHILE_RMB:0,RMB_DOWN_WHILE_LMB:0,RMB_UP_WHILE_LMB:0}};
-const wrapMap=new WeakMap();
-function emit(detail){try{document.dispatchEvent(new CustomEvent(OBS,{detail:Object.assign({schemaVersion:1},detail)}));}catch(_){}}
-function stateView(kind='STATE'){return {kind,installed:true,enabled:state.enabled,pointerHandlerCaptured:state.pointerHandlerCaptured,mouseHandlerWrapped:state.mouseHandlerWrapped,hooks:{...state.hooks},counters:{...state.counters},caseCounts:{...state.caseCounts}};}
-function fnSource(fn){try{return Function.prototype.toString.call(fn);}catch(_){return '';}}
-function isPointerHandler(fn){if(typeof fn!=='function') return false; const n=String(fn.name||''); const s=fnSource(fn); return n==='handlePointerMouseButtonEvent'||(s.includes('sendMouseButtonEvent')&&s.includes('shouldHandlePointerMouseInput')&&s.includes('pointerdown'));}
-function isMouseHandler(fn){if(typeof fn!=='function') return false; const n=String(fn.name||''); const s=fnSource(fn); return n==='getMouseButtonEvent'||(s.includes('sendMouseButtonEvent')&&s.includes('shouldIgnoreMouseCompatibilityEvent')&&s.includes('mousedown'));}
-function classifyChord(type,e){const b=Number(e?.button),bs=Number(e?.buttons);if(type==='mousedown'&&b===0&&bs===3)return {case:'LMB_DOWN_WHILE_RMB',pressed:true};if(type==='mouseup'&&b===0&&bs===2)return {case:'LMB_UP_WHILE_RMB',pressed:false};if(type==='mousedown'&&b===2&&bs===3)return {case:'RMB_DOWN_WHILE_LMB',pressed:true};if(type==='mouseup'&&b===2&&bs===1)return {case:'RMB_UP_WHILE_LMB',pressed:false};return null;}
-function pointerAdapter(event,type){const pointerType=type==='mousedown'?'pointerdown':'pointerup';return new Proxy(event,{get(target,prop){if(prop==='type')return pointerType;if(prop==='pointerType')return 'mouse';if(prop==='isPrimary')return true;if(prop==='pointerId')return 1;const v=Reflect.get(target,prop,target);return typeof v==='function'?v.bind(target):v;}});}
-function beginPending(info,eventType,event){const rec={seq:++state.seq,at:performance.now(),case:info.case,eventType,button:Number(event.button),buttons:Number(event.buttons),pressed:info.pressed,ws:null,rtc:null,done:false};state.pending.push(rec);if(state.pending.length>24)state.pending.splice(0,state.pending.length-24);setTimeout(()=>{if(rec.done)return;rec.done=true;state.counters.incompletePairs++;emit({kind:'PAIR',...stateView('PAIR'),seq:rec.seq,case:rec.case,eventType:rec.eventType,button:rec.button,buttons:rec.buttons,pressed:rec.pressed,ws:rec.ws,rtc:rec.rtc,sameIdCmd:null,error:'NATIVE_TRANSPORT_PAIR_INCOMPLETE'});state.pending=state.pending.filter(x=>x!==rec);},CORR_MS+40);return rec;}
+const state={enabled:false,installed:true,eventHandlerResolved:false,guardPatched:false,EH:null,nativeIgnore:null,seq:0,pending:[],hooks:{webSocket:!!nativeWsSend,rtcDataChannel:!!nativeRtcSend},counters:{patchAttempts:0,patchErrors:0,guardCalls:0,chordCandidates:0,guardBypasses:0,wsButtonMatches:0,rtcButtonMatches:0,pairedSameIdCmd:0,pairedDifferentIdCmd:0,incompletePairs:0},caseCounts:{LMB_DOWN_WHILE_RMB:0,LMB_UP_WHILE_RMB:0,RMB_DOWN_WHILE_LMB:0,RMB_UP_WHILE_LMB:0}};
+function emit(detail){try{document.dispatchEvent(new CustomEvent(OBS,{detail:Object.assign({schemaVersion:2},detail)}));}catch(_){}}
+function stateView(kind='STATE'){return {kind,installed:true,enabled:state.enabled,eventHandlerResolved:state.eventHandlerResolved,guardPatched:state.guardPatched,hooks:{...state.hooks},counters:{...state.counters},caseCounts:{...state.caseCounts}};}
+function classifyChord(e){const type=String(e?.type||''),b=Number(e?.button),bs=Number(e?.buttons);if(type==='mousedown'&&b===0&&bs===3)return {case:'LMB_DOWN_WHILE_RMB',pressed:true};if(type==='mouseup'&&b===0&&bs===2)return {case:'LMB_UP_WHILE_RMB',pressed:false};if(type==='mousedown'&&b===2&&bs===3)return {case:'RMB_DOWN_WHILE_LMB',pressed:true};if(type==='mouseup'&&b===2&&bs===1)return {case:'RMB_UP_WHILE_LMB',pressed:false};return null;}
+function resolveEventHandler(){try{return Function('return typeof EventHandler !== "undefined" ? EventHandler : null')();}catch(_){return null;}}
+function beginPending(info,event){const rec={seq:++state.seq,at:performance.now(),case:info.case,eventType:String(event.type||''),button:Number(event.button),buttons:Number(event.buttons),pressed:info.pressed,ws:null,rtc:null,done:false};state.pending.push(rec);if(state.pending.length>24)state.pending.splice(0,state.pending.length-24);setTimeout(()=>{if(rec.done)return;rec.done=true;state.counters.incompletePairs++;emit({kind:'PAIR',...stateView('PAIR'),seq:rec.seq,case:rec.case,eventType:rec.eventType,button:rec.button,buttons:rec.buttons,pressed:rec.pressed,ws:rec.ws,rtc:rec.rtc,sameIdCmd:null,error:'NATIVE_TRANSPORT_PAIR_INCOMPLETE'});state.pending=state.pending.filter(x=>x!==rec);},CORR_MS+50);return rec;}
 function parseButtonPayload(data){if(typeof data!=='string'||data.length<2||data.length>1024||data.charCodeAt(0)!==123)return null;try{const x=JSON.parse(data);if(x?.type!=='mouse'||x?.action!=='button')return null;return {btn:Number(x.btn),pressed:x.isPressed===true,idCmd:Number.isFinite(Number(x.id_cmd))?Number(x.id_cmd):null,fromUdp:x.from_udp===true};}catch(_){return null;}}
-function matchTransport(kind,data,label){if(!state.enabled)return; if(kind==='RTC'&&label!=='ClientDataChannel')return;const p=parseButtonPayload(data);if(!p)return;const now=performance.now();let rec=null;for(let i=state.pending.length-1;i>=0;i--){const r=state.pending[i];if(r.done)continue;if(now-r.at>CORR_MS)continue;if(r.button===p.btn&&r.pressed===p.pressed){rec=r;break;}}if(!rec)return;const view={idCmd:p.idCmd,fromUdp:p.fromUdp};if(kind==='WS'&&!p.fromUdp&&!rec.ws){rec.ws=view;state.counters.wsButtonMatches++;}else if(kind==='RTC'&&p.fromUdp&&!rec.rtc){rec.rtc=view;state.counters.rtcButtonMatches++;}if(rec.ws&&rec.rtc&&!rec.done){rec.done=true;const same=rec.ws.idCmd!==null&&rec.ws.idCmd===rec.rtc.idCmd;if(same)state.counters.pairedSameIdCmd++;else state.counters.pairedDifferentIdCmd++;emit({kind:'PAIR',...stateView('PAIR'),seq:rec.seq,case:rec.case,eventType:rec.eventType,button:rec.button,buttons:rec.buttons,pressed:rec.pressed,ws:rec.ws,rtc:rec.rtc,sameIdCmd:same});state.pending=state.pending.filter(x=>x!==rec);}}
-function getWrapper(fn,type){let per=wrapMap.get(fn);if(!per){per=new Map();wrapMap.set(fn,per);}if(per.has(type))return per.get(type);const wrapped=function(event){const info=state.enabled?classifyChord(type,event):null;if(!info)return fn.call(this,event);state.counters.chordCandidates++;state.caseCounts[info.case]=(state.caseCounts[info.case]||0)+1;if(typeof state.pointerHandler!=='function'){state.counters.noPointerHandler++;emit({kind:'ERROR',...stateView('ERROR'),case:info.case,eventType:type,button:Number(event?.button),buttons:Number(event?.buttons),pressed:info.pressed,error:'POINTER_HANDLER_NOT_CAPTURED'});return fn.call(this,event);}const rec=beginPending(info,type,event);state.counters.rerouted++;emit({kind:'CORRECTION',...stateView('CORRECTION'),seq:rec.seq,case:info.case,eventType:type,button:rec.button,buttons:rec.buttons,pressed:rec.pressed});let adapted;try{adapted=pointerAdapter(event,type);}catch(err){state.counters.adapterErrors++;rec.done=true;state.pending=state.pending.filter(x=>x!==rec);emit({kind:'ERROR',...stateView('ERROR'),seq:rec.seq,case:info.case,error:'ADAPTER:'+String(err?.message||err).slice(0,120)});return fn.call(this,event);}try{return state.pointerHandler.call(this,adapted);}catch(err){state.counters.handlerErrors++;rec.done=true;state.pending=state.pending.filter(x=>x!==rec);emit({kind:'ERROR',...stateView('ERROR'),seq:rec.seq,case:info.case,error:'HANDLER:'+String(err?.message||err).slice(0,120)});if(!event.defaultPrevented)return fn.call(this,event);}};per.set(type,wrapped);return wrapped;}
-EventTarget.prototype.addEventListener=function(type,listener,options){try{if((type==='pointerdown'||type==='pointerup')&&isPointerHandler(listener)){state.pointerHandler=listener;state.pointerHandlerCaptured=true;state.counters.pointerHandlerCaptures++;emit({kind:'HANDLER_CAPTURE',...stateView('HANDLER_CAPTURE'),handler:'handlePointerMouseButtonEvent',eventType:type});}if((type==='mousedown'||type==='mouseup')&&isMouseHandler(listener)){state.counters.handlerRegistrations++;state.mouseHandlerWrapped=true;state.counters.mouseHandlerWraps++;const w=getWrapper(listener,type);return nativeAdd.call(this,type,w,options);}}catch(_){}return nativeAdd.call(this,type,listener,options);};
-EventTarget.prototype.removeEventListener=function(type,listener,options){try{if((type==='mousedown'||type==='mouseup')&&typeof listener==='function'){const per=wrapMap.get(listener);const w=per?.get(type);if(w)return nativeRemove.call(this,type,w,options);}}catch(_){}return nativeRemove.call(this,type,listener,options);};
+function matchTransport(kind,data,label){if(!state.enabled)return;if(kind==='RTC'&&label!=='ClientDataChannel')return;const p=parseButtonPayload(data);if(!p)return;const now=performance.now();let rec=null;for(let i=state.pending.length-1;i>=0;i--){const r=state.pending[i];if(r.done||now-r.at>CORR_MS)continue;if(r.button===p.btn&&r.pressed===p.pressed){rec=r;break;}}if(!rec)return;const view={idCmd:p.idCmd,fromUdp:p.fromUdp};if(kind==='WS'&&!p.fromUdp&&!rec.ws){rec.ws=view;state.counters.wsButtonMatches++;}else if(kind==='RTC'&&p.fromUdp&&!rec.rtc){rec.rtc=view;state.counters.rtcButtonMatches++;}if(rec.ws&&rec.rtc&&!rec.done){rec.done=true;const same=rec.ws.idCmd!==null&&rec.ws.idCmd===rec.rtc.idCmd;if(same)state.counters.pairedSameIdCmd++;else state.counters.pairedDifferentIdCmd++;emit({kind:'PAIR',...stateView('PAIR'),seq:rec.seq,case:rec.case,eventType:rec.eventType,button:rec.button,buttons:rec.buttons,pressed:rec.pressed,ws:rec.ws,rtc:rec.rtc,sameIdCmd:same});state.pending=state.pending.filter(x=>x!==rec);}}
+function tryPatch(){state.counters.patchAttempts++;if(state.guardPatched)return true;const EH=resolveEventHandler();if(!EH||typeof EH.shouldIgnoreMouseCompatibilityEvent!=='function')return false;state.EH=EH;state.eventHandlerResolved=true;const nativeIgnore=EH.shouldIgnoreMouseCompatibilityEvent;if(nativeIgnore?.__bcsRc15GuardPatch===true){state.guardPatched=true;emit(stateView('PATCHED'));return true;}state.nativeIgnore=nativeIgnore;function patchedIgnore(event){state.counters.guardCalls++;let ignored=false;try{ignored=!!nativeIgnore.call(this,event);}catch(err){state.counters.patchErrors++;emit({kind:'ERROR',...stateView('ERROR'),error:'NATIVE_GUARD:'+String(err?.message||err).slice(0,120)});throw err;}if(!state.enabled||!ignored)return ignored;const info=classifyChord(event);if(!info)return ignored;state.counters.chordCandidates++;state.counters.guardBypasses++;state.caseCounts[info.case]=(state.caseCounts[info.case]||0)+1;const rec=beginPending(info,event);emit({kind:'BYPASS',...stateView('BYPASS'),seq:rec.seq,case:info.case,eventType:rec.eventType,button:rec.button,buttons:rec.buttons,pressed:rec.pressed});return false;}try{Object.defineProperty(patchedIgnore,'__bcsRc15GuardPatch',{value:true});}catch(_){}EH.shouldIgnoreMouseCompatibilityEvent=patchedIgnore;state.guardPatched=EH.shouldIgnoreMouseCompatibilityEvent===patchedIgnore;if(!state.guardPatched){state.counters.patchErrors++;emit({kind:'ERROR',...stateView('ERROR'),error:'GUARD_ASSIGN_FAILED'});return false;}emit(stateView('PATCHED'));return true;}
+let tries=0;const timer=setInterval(()=>{tries++;if(tryPatch()||tries>=600){clearInterval(timer);if(!state.guardPatched&&tries>=600)emit({kind:'ERROR',...stateView('ERROR'),error:'EVENT_HANDLER_GUARD_NOT_FOUND'});}},20);tryPatch();
 if(nativeWsSend){WebSocket.prototype.send=function(data){if(state.enabled)matchTransport('WS',data,null);return nativeWsSend.apply(this,arguments);};}
 if(nativeRtcSend){RTCDataChannel.prototype.send=function(data){if(state.enabled)matchTransport('RTC',data,String(this?.label||''));return nativeRtcSend.apply(this,arguments);};}
-document.addEventListener(CONTROL,(e)=>{const d=e?.detail||{};if(d.action==='ENABLE'){state.enabled=true;state.pending=[];emit(stateView('STATE'));}else if(d.action==='DISABLE'){state.enabled=false;state.pending=[];emit(stateView('STATE'));}else if(d.action==='STATE')emit(stateView('STATE'));},true);
+document.addEventListener(CONTROL,(e)=>{const d=e?.detail||{};if(d.action==='ENABLE'){state.enabled=true;state.pending=[];tryPatch();emit(stateView('STATE'));}else if(d.action==='DISABLE'){state.enabled=false;state.pending=[];emit(stateView('STATE'));}else if(d.action==='STATE'){tryPatch();emit(stateView('STATE'));}},true);
 emit(stateView('READY'));
 })();
-//# sourceURL=bcs-rc14-chorded-mouse-fix.js`;
+//# sourceURL=bcs-rc15-chorded-mouse-guard-fix.js`;
   try{const sc=document.createElement('script');sc.textContent=source;(document.documentElement||document.head||document).appendChild(sc);sc.remove();}
   catch(e){pushChordFixEvent('CHORD_FIX_INSTALL_ERROR',{error:String(e?.message||e).slice(0,180)},true);}
 }
@@ -1763,7 +1753,7 @@ emit(stateView('READY'));
 function setMouseChordFixEnabled(enabled,reason='UI'){
   const F=S.mouseChordFix; enabled=!!enabled;
   if(enabled===F.enabled) return;
-  if(enabled){resetChordFixTelemetry();F.enabled=true;F.startedAtSec=round(elapsed(),3);F.stoppedAtSec=null;dispatchChordFixControl({action:'ENABLE'});addEvent('H014C_CHORDED_MOUSE_FIX_ENABLED',{reason});pushChordFixEvent('CHORD_FIX_ENABLED',{reason},true);}
+  if(enabled){resetChordFixTelemetry();F.enabled=true;F.startedAtSec=round(elapsed(),3);F.stoppedAtSec=null;dispatchChordFixControl({action:'ENABLE'});addEvent('H014C_CHORDED_MOUSE_FIX_ENABLED',{reason,method:'DIRECT_COMPATIBILITY_GUARD_BYPASS'});pushChordFixEvent('CHORD_FIX_ENABLED',{reason},true);}
   else{dispatchChordFixControl({action:'DISABLE'});F.enabled=false;F.stoppedAtSec=round(elapsed(),3);addEvent('H014C_CHORDED_MOUSE_FIX_DISABLED',{reason,counters:{...F.counters}});pushChordFixEvent('CHORD_FIX_DISABLED',{reason},true);}
   updateUI();
 }
@@ -1771,24 +1761,24 @@ function setMouseChordFixEnabled(enabled,reason='UI'){
 function chordFixClassification(){
   const F=S.mouseChordFix;
   if(!F.installed) return 'FIX_HOOK_NOT_INSTALLED';
-  if(!F.pointerHandlerCaptured || !F.mouseHandlerWrapped) return 'WAITING_NATIVE_HANDLERS';
+  if(!F.eventHandlerResolved || !F.guardPatched) return 'WAITING_EVENT_HANDLER_GUARD';
   if(!F.enabled) return 'READY_OFF';
-  if(F.counters.handlerErrors||F.counters.adapterErrors) return 'FIX_ERROR';
+  if(F.counters.patchErrors) return 'FIX_ERROR';
   if(!F.counters.chordCandidates) return 'ACTIVE_WAITING_CHORD';
   if(F.counters.pairedDifferentIdCmd) return 'DUAL_TRANSPORT_ID_MISMATCH';
-  if(F.counters.pairedSameIdCmd===F.counters.rerouted && F.counters.rerouted>0) return 'NATIVE_DUAL_TRANSPORT_CONFIRMED';
+  if(F.counters.pairedSameIdCmd===F.counters.guardBypasses && F.counters.guardBypasses>0) return 'NATIVE_DUAL_TRANSPORT_CONFIRMED';
   if(F.counters.incompletePairs) return 'NATIVE_TRANSPORT_PAIR_INCOMPLETE';
-  return 'REROUTED_AWAITING_PAIR';
+  return 'GUARD_BYPASS_AWAITING_PAIR';
 }
 
 function mouseChordFixSnapshot(){
   const F=S.mouseChordFix;
-  return {schemaVersion:1,mode:'H014C_CHORDED_MOUSE_COMPATIBILITY_FIX',enabled:F.enabled,manualGate:true,offByDefault:true,
-    implementation:'Wrap only Boosteroid getMouseButtonEvent mousedown/up listener; exact chord transitions are rerouted into captured native handlePointerMouseButtonEvent with a read-through event adapter.',
-    sourceBasis:{catchEventsVersion:'3.7.19.1.1',compatibilitySuppressionMs:500,nativeSender:'EventHandler.sendMouseButtonEvent(event, pressedStatus)',nativeTransport:'SessionHandler.sendEvents -> WebSocket(from_udp=false) + ClientDataChannel(from_udp=true) with same id_cmd'},
-    invariants:{rawTransportCapture:false,payloadMutation:false,idCmdFabrication:false,additionalTransportSend:false,syntheticDomEventDispatch:false,streamControlMutation:false},
-    hooks:{eventListenerWrap:true,webSocketSendPassThrough:true,rtcDataChannelSendPassThrough:true},
-    state:{installed:F.installed,pointerHandlerCaptured:F.pointerHandlerCaptured,mouseHandlerWrapped:F.mouseHandlerWrapped,wsHook:F.wsHook,rtcHook:F.rtcHook,startedAtSec:F.startedAtSec,stoppedAtSec:F.stoppedAtSec},
+  return {schemaVersion:2,mode:'H014C_DIRECT_COMPATIBILITY_GUARD_BYPASS',enabled:F.enabled,manualGate:true,offByDefault:true,
+    implementation:'Patch Boosteroid EventHandler.shouldIgnoreMouseCompatibilityEvent in page lexical scope. Preserve original result except when it would suppress one of four true chorded mousedown/up transitions; then return false and let untouched getMouseButtonEvent/sendMouseButtonEvent execute.',
+    sourceBasis:{catchEventsVersion:'3.7.19.1.1',compatibilitySuppressionMs:500,nativeMousePath:'getMouseButtonEvent(event) -> sendMouseButtonEvent(event, event.type === mousedown)',nativeTransport:'SessionHandler.sendEvents -> WebSocket(from_udp=false) + ClientDataChannel(from_udp=true) with same id_cmd'},
+    invariants:{pointerHandlerReroute:false,compatibilityWindowRefreshByFix:false,rawTransportCapture:false,payloadMutation:false,idCmdFabrication:false,additionalTransportSend:false,syntheticDomEventDispatch:false,streamControlMutation:false},
+    hooks:{eventHandlerGuardPatch:true,eventListenerWrap:false,webSocketSendPassThrough:true,rtcDataChannelSendPassThrough:true},
+    state:{installed:F.installed,eventHandlerResolved:F.eventHandlerResolved,guardPatched:F.guardPatched,wsHook:F.wsHook,rtcHook:F.rtcHook,startedAtSec:F.startedAtSec,stoppedAtSec:F.stoppedAtSec},
     counters:{...F.counters},caseCounts:{...F.caseCounts},classification:chordFixClassification(),lastPair:F.lastPair,events:F.events.toArray()};
 }
 
@@ -5531,7 +5521,7 @@ function buildExport() {
       name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
       pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
       schemaVersion:2,
-      status:'V0.8.1_RC14__CHORDED_MOUSE_COMPATIBILITY_FIX__NOT_CANONICAL'
+      status:'V0.8.1_RC15__DIRECT_COMPATIBILITY_GUARD_BYPASS__NOT_CANONICAL'
     },
     exportedAt:new Date().toISOString(),
     environment:ENV,
@@ -5685,7 +5675,7 @@ function buildExport() {
       pageMethodOverrides:S.control.state==='ACTIVE' && (S.control.application?.patch?.patched||S.control.application?.patched) ? ['StreamDeviceContext.getSafeResolution','SessionHandler.getWindowResolution'] : [],
       exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
       controlModel:'PERSISTENT_AUTO_APPLY',
-      telemetryIntegrityModel:'RC14_CHORDED_MOUSE_NATIVE_REROUTE_PLUS_DUAL_TRANSPORT_CONFIRMATION_PLUS_RC7_IMMERSIVE_GAME_MODE',
+      telemetryIntegrityModel:'RC15_DIRECT_COMPATIBILITY_GUARD_BYPASS_PLUS_DUAL_TRANSPORT_CONFIRMATION_PLUS_RC7_IMMERSIVE_GAME_MODE',
       legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
       longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls',
       telemetryIntegrity:{
@@ -5712,7 +5702,7 @@ function buildExport() {
         manualFixGate:true,offByDefault:true,pageContextHookInstalledAtDocumentStart:true,
         listenerScope:'Boosteroid getMouseButtonEvent mousedown/up only',
         chordCases:['LMB_DOWN_WHILE_RMB','LMB_UP_WHILE_RMB','RMB_DOWN_WHILE_LMB','RMB_UP_WHILE_LMB'],
-        nativeRerouteTarget:'captured handlePointerMouseButtonEvent',
+        nativeCorrectionTarget:'EventHandler.shouldIgnoreMouseCompatibilityEvent -> native getMouseButtonEvent',
         transportProof:'pass-through WebSocket.send + ClientDataChannel.send metadata only',
         payloadMutation:false,idCmdFabrication:false,additionalTransportSend:false,rawPayloadCapture:false,syntheticDomEventDispatch:false
       },
@@ -5866,8 +5856,8 @@ function updateUI(sample = null) {
   setText('bcs-input-last',inputProbeEventSummaryLabel(P.lastEvent));
   setText('bcs-input-counts',`${P.counters.keydown}/${P.counters.mousedown}/${P.counters.pointerdown}`);
   setText('bcs-mouse-transport-state',F.enabled ? 'ATIVO' : 'OFF');
-  setText('bcs-mouse-transport-hooks',`${F.pointerHandlerCaptured?'HANDLER':'-'} / ${(F.wsHook&&F.rtcHook)?'WS+RTC':(F.rtcHook?'RTC':'-')}`);
-  setText('bcs-mouse-transport-counts',`${F.counters.rerouted}/${F.counters.pairedSameIdCmd}`);
+  setText('bcs-mouse-transport-hooks',`${F.guardPatched?'GUARD':'-'} / ${(F.wsHook&&F.rtcHook)?'WS+RTC':(F.rtcHook?'RTC':'-')}`);
+  setText('bcs-mouse-transport-counts',`${F.counters.guardBypasses}/${F.counters.pairedSameIdCmd}`);
   setText('bcs-mouse-transport-result',chordFixClassification());
   setText('bcs-immersive-error',I.lastError ? `${I.lastError.stage}: ${I.lastError.error}` : '--');
   const probeBtn=$('bcs-input-probe-toggle');
@@ -5955,14 +5945,14 @@ html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display
     <div class="bcs-row"><span>Key↓ / Mouse↓ / Pointer↓</span><b id="bcs-input-counts">0/0/0</b></div>
     <div class="bcs-row"><span>Último evento</span><b id="bcs-input-last">--</b></div>
     <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-input-probe-toggle" class="bcs-btn">INICIAR PROBE</button></div>
-    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC14 não despacha KeyboardEvent/MouseEvent/PointerEvent sintético.</div>
-    <div class="bcs-st">RC14 • FIX LMB + RMB</div>
+    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC15 não despacha KeyboardEvent/MouseEvent/PointerEvent sintético.</div>
+    <div class="bcs-st">RC15 • FIX LMB + RMB</div>
     <div class="bcs-row"><span>Fix</span><b id="bcs-mouse-transport-state">OFF</b></div>
-    <div class="bcs-row"><span>Handler / transporte</span><b id="bcs-mouse-transport-hooks">- / -</b></div>
-    <div class="bcs-row"><span>Correções / pares nativos</span><b id="bcs-mouse-transport-counts">0/0</b></div>
+    <div class="bcs-row"><span>Guard / transporte</span><b id="bcs-mouse-transport-hooks">- / -</b></div>
+    <div class="bcs-row"><span>Bypasses / pares nativos</span><b id="bcs-mouse-transport-counts">0/0</b></div>
     <div class="bcs-row"><span>Estado</span><b id="bcs-mouse-transport-result">READY_OFF</b></div>
     <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-mouse-transport-toggle" class="bcs-btn bcs-primary">ATIVAR FIX LMB+RMB</button></div>
-    <div class="bcs-note">EXPERIMENTAL: atua somente nas quatro transições reais de segundo botão. Usa o handler nativo do Boosteroid; não fabrica id_cmd, não cria pacote paralelo e não substitui mouse/move.</div>
+    <div class="bcs-note">EXPERIMENTAL: atua somente nas quatro transições reais de segundo botão. Bypassa apenas o filtro de compatibilidade de 500 ms e deixa getMouseButtonEvent/sendMouseButtonEvent nativos cuidarem do clique; não fabrica id_cmd nem toca no transporte.</div>
   </div>
 
   <div class="bcs-card" id="bcs-analyzer-card">
@@ -6090,7 +6080,7 @@ function boot() {
   addEvent('SUITE_BOOT',{
     version:VERSION,
     build:BUILD,
-    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC14_CHORDED_MOUSE_COMPATIBILITY_FIX__RC7_IMMERSIVE_GAME_MODE',
+    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC15_DIRECT_COMPATIBILITY_GUARD_BYPASS__RC7_IMMERSIVE_GAME_MODE',
     controlModel:'PERSISTENT_AUTO_APPLY',
     profileEnabled:isAutoEnabled(),
     bootBehavior:isAutoEnabled() ? 'AUTO_APPLY_ENABLED' : 'SAFE',
