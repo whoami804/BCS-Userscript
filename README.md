@@ -12,36 +12,43 @@ Abra essa URL no navegador em que o Tampermonkey está instalado e confirme **In
 
 ## Beta publicada
 
-- runtime: `v0.8.1-rc16 — Immersive v2 Native-First + Input State Guardian + RC15 Chord Fix`;
-- status: `STATIC PASS / TARGETED IMMERSIVE V2 NATIVE-FIRST + GUARDIAN SMOKE PASS / LAB-B LIVE PENDING / NOT CANONICAL`;
-- engineering SHA-256: `70fb770495c3a35afa1fec2b01d2ba942b830832d549b86e060fe65b8d113686`;
-- public distribution SHA-256: `d079b13b6301e60ae7c22cc9e9ddbc30e8ea7fa26ade9c9a29c300880c51057c`;
-- public Git blob: `bd106803dfd97c83ef82360271416b23710200e2`;
-- workflow `Publish beta userscript` run #27 / id `33351738015`: SUCCESS.
+- runtime: `v0.8.1-rc17 — Image Lab Feature Layer 0.1 + Immersive v2 Native-First + Integrated H-014C Fix`;
+- status: `STATIC PASS / EXPORT-ONLY FEATURE-LAYER SMOKE PASS / RC16 IMMERSIVE V2 LIVE PASS INHERITED / LAB LIVE PERFORMANCE CONFIRMATION PENDING / NOT CANONICAL`;
+- engineering SHA-256: `eab2c9920ad9458a2a97a1bb0e5af088efe24bacee0eeb5fa0399112afd9d65b`;
+- public distribution SHA-256: `e077fb5f43a923eef8aca4668386805e941e4521e08e7aa302edfc5c56f26233`;
+- public Git blob: `888a34ad3bf833458b0e7844b8b08bbf384d457f`;
+- workflow `Publish beta userscript` run #29 / id `33357128700`: SUCCESS.
 
-## H-014C — simultaneous LMB/RMB
+## Immersive v2 / H-014
 
-**RC15 LIVE PASS.** O caso real `RMB segurado + LMB disparando` funcionou normalmente no LAB-B. O log registrou 32 chord edges corrigidos, 32/32 pares WebSocket + ClientDataChannel com o mesmo `id_cmd`, zero mismatch, zero par incompleto e classificação `NATIVE_DUAL_TRANSPORT_CONFIRMED`.
+RC16 passou no LAB-B: fullscreen native-first ficou correto, o ponteiro não desaparece ao ativar o modo e o fluxo nativo do Boosteroid permanece dono da captura de mouse.
 
-A correção preservada na RC16 atua somente em `EventHandler.shouldIgnoreMouseCompatibilityEvent` para os quatro edges chorded reais. Não fabrica `id_cmd`, não altera payload, não injeta send extra, não sintetiza DOM input e não renova a janela de supressão de 500 ms pelo fix.
+H-014C também permanece validado. O único defeito encontrado na RC16 foi de integração: o fix já aprovado ainda estava OFF por padrão. Ao habilitá-lo manualmente, o comportamento voltou ao normal imediatamente, confirmando que não houve regressão do algoritmo RC15.
 
-## Immersive v2 — Native-First
+Na RC17 o fix passa a ser **ativado automaticamente no LAB-B + Chromium**. O botão permanece como kill-switch de diagnóstico. A lógica do guard RC15 não foi alterada.
 
-A RC16 refatora o Immersive sem reabrir o Stream Control nem o fix RC15:
+## Image Lab Feature Layer 0.1
 
-- fullscreen mobile usa `document.documentElement` como alvo primário;
-- Keyboard Lock de `Escape`/`Tab` continua orquestrado pelo BCS;
-- o BCS não chama mais `requestPointerLock()` diretamente;
-- a captura do mouse fica a cargo do fluxo nativo do Boosteroid / `CursorModeManager` após ação física do usuário;
-- ownership e cleanup continuam preservando estados preexistentes;
-- `Input State Guardian` mantém shadow state local e observa blur/visibility/pagehide;
-- possível input preso é somente diagnosticado; não existe release sintético nem resend periódico.
+RC17 inicia a camada de features do Diagnostic Model seguindo:
 
-## Gate LIVE RC16
+`Raw Telemetry → Derived Features → Observations → Deductions`
 
-`ATUALIZAR → RELOAD COMPLETO → ENTRAR IMERSIVO V2 → clicar fisicamente no jogo para o Boosteroid capturar o mouse → jogar normalmente → testar Esc/Tab → perder/recuperar foco uma vez se conveniente → SAIR → BAIXAR LOG`.
+Nesta etapa só existem **Derived Features**. Não há diagnóstico causal automático nem threshold universal.
 
-PASS exige fullscreen/Keyboard Lock normais, captura nativa de mouse funcional, nenhuma regressão do RC15 e saída limpa. Até esse gate, **RC16 é beta e não canônica**.
+Para proteger performance, a derivação é **EXPORT-ONLY**:
+- zero passe de feature model durante gameplay;
+- zero `getStats()` adicional;
+- zero captura/leitura de pixels;
+- zero Canvas analysis;
+- zero ML no runtime.
+
+O sampler apenas preserva alguns contadores opcionais já presentes no mesmo relatório WebRTC. Quando o usuário exporta o log, a Suite deriva sinais como coding density (bits/pixel/frame), retransmission ratio, drop ratio, decode/processing budget, jitter-buffer excess, surface scaling e corruption probability quando exposta pelo caminho negociado.
+
+## Gate LIVE RC17
+
+`ATUALIZAR/RELOAD → confirmar FIX LMB+RMB já ativo → ENTRAR IMERSIVO → jogar normalmente por ~2–3 min com DEEP OFF → observar fluidez/latência → BAIXAR LOG`.
+
+PASS exige experiência normal e export contendo `imageFeatureLayer.computation = EXPORT_ONLY` e `extraGetStatsCallsPerSample = 0`.
 
 ## Privacidade
 
