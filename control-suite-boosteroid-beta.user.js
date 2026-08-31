@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc17
-// @description  Image Lab Feature Layer 0.1: export-only derived quality features with zero extra getStats/pixel analysis; Immersive v2 + integrated H-014C fix preserved.
+// @version      0.8.1-rc18
+// @description  Play-First pruning candidate: lean gameplay runtime, Immersive v2 and minimal H-014C fix, compact support telemetry.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,48 +17,21 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc17';
-const BUILD = 'Image Lab Feature Layer 0.1 + Immersive v2 Native-First + Integrated H-014C Fix - RC17';
+const VERSION = '0.8.1-rc18';
+const BUILD = 'Play-First Runtime Pruning + Immersive v2 + Minimal H-014C Fix - RC18';
 const SAMPLE_MS = 1000;
-const CONTEXT_MS = 5000;
+const CONTEXT_MS = 15000;
 const STARTUP_STABLE_SAMPLES = 5;
 const COMPOSITOR_REGIME_CONFIRM_SAMPLES = 3;
 const RESOLUTION_PROOF_CONFIRM_SAMPLES = 3;
 const RESOLUTION_PROOF_TIMEOUT_SEC = 8;
-const MAX_SAMPLES = 3600;
-const MAX_EVENTS = 2400;
-const MAX_IMPORTANT_EVENTS = 640;
-const MAX_INPUT_PROBE_EVENTS = 512;
-const INPUT_PROBE_AUTO_STOP_MS = 2 * 60 * 1000;
-const MAX_MOUSE_TRANSPORT_EVENTS = 512;
-const MOUSE_TRANSPORT_AUTO_STOP_MS = 30 * 1000;
-const MOUSE_TRANSPORT_CORRELATION_MS = 120;
-const MOUSE_TRANSPORT_CONTROL_EVENT = '__BCS_RC13_NATIVE_HANDLER_SHAPE_CONTROL__';
-const MOUSE_TRANSPORT_OBS_EVENT = '__BCS_RC13_NATIVE_HANDLER_SHAPE_OBS__';
+const MAX_SAMPLES = 900;
+const MAX_IMPORTANT_EVENTS = 180;
 const CHORD_FIX_CONTROL_EVENT = '__BCS_RC15_CHORDED_MOUSE_FIX_CONTROL__';
 const CHORD_FIX_OBS_EVENT = '__BCS_RC15_CHORDED_MOUSE_FIX_OBS__';
-const MAX_CHORD_FIX_EVENTS = 256;
-const CHORD_FIX_CORRELATION_MS = 120;
 const IMMERSIVE_KEY_CODES = Object.freeze(['Escape','Tab']);
 const IMMERSIVE_EXIT_CHORD = Object.freeze({ code:'Escape', ctrlKey:true, altKey:true, shiftKey:true });
 const IMMERSIVE_EXIT_CHORD_LABEL = 'Ctrl+Alt+Shift+Esc';
-const LONG_SESSION_CHECKPOINT_MS = 60 * 1000;
-const LONG_SESSION_MEMORY_MS = 5 * 60 * 1000;
-const LONG_SESSION_STORAGE_MS = 5 * 60 * 1000;
-const MAX_LONG_SESSION_CHECKPOINTS = 720; // 12h at 1 checkpoint/minute
-const LONG_SESSION_DB_NAME = 'bcs_long_session_v1';
-const LONG_SESSION_DB_VERSION = 1;
-const LONG_SESSION_SESSION_STORE = 'sessions';
-const LONG_SESSION_CHECKPOINT_STORE = 'checkpoints';
-const LONG_SESSION_ACTIVE_KEY = 'bcs.longSession.activeSessionId';
-const LONG_SESSION_RESUME_WINDOW_MS = 12 * 60 * 60 * 1000;
-const LONG_SESSION_MAX_PERSISTED_SESSIONS = 4;
-const FRAME_BIN_MS = 0.5;
-const FRAME_HIST_MAX_MS = 100;
-const FRAME_HIST_BINS = Math.ceil(FRAME_HIST_MAX_MS / FRAME_BIN_MS) + 1;
-const DEEP_WORK_BIN_MS = 0.05;
-const DEEP_WORK_MAX_MS = 5;
-const DEEP_WORK_BINS = Math.ceil(DEEP_WORK_MAX_MS / DEEP_WORK_BIN_MS) + 1;
 const BRIDGE_REQ = '__BCS_V06_REQ__';
 const BRIDGE_RES = '__BCS_V06_RES__';
 const DEBUG = false;
@@ -295,17 +268,12 @@ class Ring {
 }
 
 const IMPORTANT_EVENT_TYPES = new Set([
-  'STREAM_ANOMALY','FREEZE_CHANGE','CODEC_CHANGE','INBOUND_RESOLUTION_CHANGE',
-  'PEER_CONNECTION_STATE','BITRATE_SOURCE_CHANGE','COMPOSITOR_REGIME_CHANGE',
-  'SURFACE_CHANGE','VIEWPORT_CHANGE','ORIENTATION_CHANGE','PHASE_CHANGE',
-  'RESOLUTION_PROOF_STATUS','EXPERIMENT_CONFOUND','MEASUREMENT_REANCHOR',
-  'VISIBILITY_CHANGE','SAMPLER_ERROR','BRIDGE_INSTALL_ERROR',
-  'LONG_SESSION_CHECKPOINT_ERROR','LONG_SESSION_PERSISTENCE_ERROR','LONG_SESSION_PERSISTENCE_PRUNE_ERROR',
-  'LONG_SESSION_PERSISTENCE_RECOVERED','LONG_SESSION_PERSISTENCE_UNAVAILABLE',
-  'INPUT_PROBE_START','INPUT_PROBE_STOP','INPUT_KEYBOARD_LOCK_CHANGE','INPUT_KEYBOARD_LOCK_ERROR',
-  'MOUSE_SENDER_REFERENCE_DISCOVERY_START','MOUSE_SENDER_REFERENCE_DISCOVERY_STOP',
-  'IMMERSIVE_ENTER','IMMERSIVE_EXIT','IMMERSIVE_FULLSCREEN_CHANGE','IMMERSIVE_POINTER_LOCK_CHANGE','IMMERSIVE_LOCK_ERROR',
-  'IMMERSIVE_NATIVE_POINTER_ARMED','IMMERSIVE_NATIVE_POINTER_ACQUIRED','IMMERSIVE_SUSPEND','IMMERSIVE_RESUME','IMMERSIVE_POSSIBLE_STUCK_INPUT'
+  'SUITE_BOOT','AUTO_PROFILE_BOOT','AUTO_PROFILE_ENABLED','AUTO_PROFILE_DISABLED',
+  'CONTROL_APPLIED','CONTROL_APPLY_FAILED','CONTROL_DISARMED','FPS_APPLIED','FPS_APPLY_FAILED','BITRATE_APPLIED','BITRATE_APPLY_FAILED',
+  'FREEZE_CHANGE','CODEC_CHANGE','INBOUND_RESOLUTION_CHANGE','PEER_CONNECTION_STATE','BITRATE_SOURCE_CHANGE','RESOLUTION_PROOF_STATUS',
+  'MEASUREMENT_REANCHOR','VISIBILITY_CHANGE','SAMPLER_ERROR','BRIDGE_INSTALL_ERROR',
+  'IMMERSIVE_ENTER','IMMERSIVE_EXIT','IMMERSIVE_FULLSCREEN_CHANGE','IMMERSIVE_POINTER_LOCK_CHANGE','IMMERSIVE_LOCK_ERROR','IMMERSIVE_NATIVE_POINTER_ARMED','IMMERSIVE_NATIVE_POINTER_ACQUIRED',
+  'H014C_FIX_ENABLED','H014C_FIX_DISABLED','H014C_FIX_ERROR','H014C_FIX_PATCHED','EXPORT'
 ]);
 
 function detectEnvironment() {
@@ -378,69 +346,11 @@ function detectEnvironment() {
 }
 
 function capabilitySnapshot() {
-  const mq = q => { try { return matchMedia(q).matches; } catch { return null; } };
-  let webgl2 = false;
-  try { webgl2 = !!document.createElement('canvas').getContext('webgl2'); } catch {}
-  let rtcVideoCodecs = [];
-  try {
-    rtcVideoCodecs = (RTCRtpReceiver?.getCapabilities?.('video')?.codecs || []).map(c => ({
-      mimeType: c.mimeType || null,
-      clockRate: c.clockRate || null,
-      sdpFmtpLine: c.sdpFmtpLine || ''
-    }));
-  } catch {}
-
+  const mq=q=>{try{return matchMedia(q).matches;}catch{return null;}};
   return {
-    video: {
-      htmlVideoElement: typeof HTMLVideoElement !== 'undefined',
-      requestVideoFrameCallback: typeof HTMLVideoElement !== 'undefined' &&
-        typeof HTMLVideoElement.prototype.requestVideoFrameCallback === 'function',
-      getVideoPlaybackQuality: typeof HTMLVideoElement !== 'undefined' &&
-        typeof HTMLVideoElement.prototype.getVideoPlaybackQuality === 'function',
-      mediaCapabilities: !!navigator.mediaCapabilities?.decodingInfo,
-      webCodecs: typeof VideoDecoder !== 'undefined'
-    },
-    webrtc: {
-      rtcPeerConnection: typeof RTCPeerConnection !== 'undefined',
-      rtcStatsReport: typeof RTCStatsReport !== 'undefined',
-      setCodecPreferences: typeof RTCRtpTransceiver !== 'undefined' &&
-        'setCodecPreferences' in RTCRtpTransceiver.prototype,
-      jitterBufferTarget: typeof RTCRtpReceiver !== 'undefined' &&
-        'jitterBufferTarget' in RTCRtpReceiver.prototype,
-      playoutDelayHint: typeof RTCRtpReceiver !== 'undefined' &&
-        'playoutDelayHint' in RTCRtpReceiver.prototype,
-      videoCodecs: rtcVideoCodecs
-    },
-    input: {
-      gamepad: typeof navigator.getGamepads === 'function',
-      vibration: typeof navigator.vibrate === 'function',
-      pointer: typeof PointerEvent !== 'undefined',
-      pointerLock: 'pointerLockElement' in document,
-      keyboard: true,
-      keyboardLock: !!navigator.keyboard && typeof navigator.keyboard.lock === 'function' && typeof navigator.keyboard.unlock === 'function',
-      touch: navigator.maxTouchPoints > 0 || 'ontouchstart' in window
-    },
-    display: {
-      fullscreen: !!(document.fullscreenEnabled || document.webkitFullscreenEnabled),
-      p3: mq('(color-gamut: p3)'),
-      rec2020: mq('(color-gamut: rec2020)'),
-      dynamicRangeHigh: mq('(dynamic-range: high)'),
-      videoDynamicRangeHigh: mq('(video-dynamic-range: high)'),
-      visualViewport: typeof visualViewport !== 'undefined'
-    },
-    experimental: {
-      webGPU: !!navigator.gpu,
-      webGL2: webgl2,
-      performanceObserver: typeof PerformanceObserver !== 'undefined',
-      longTask: typeof PerformanceObserver !== 'undefined' &&
-        Array.isArray(PerformanceObserver.supportedEntryTypes) &&
-        PerformanceObserver.supportedEntryTypes.includes('longtask'),
-      memory: !!performance.memory,
-      measureUserAgentSpecificMemory: typeof performance.measureUserAgentSpecificMemory === 'function',
-      crossOriginIsolated: globalThis.crossOriginIsolated === true,
-      storageEstimate: typeof navigator.storage?.estimate === 'function',
-      computePressure: typeof globalThis.PressureObserver === 'function'
-    }
+    webrtc:{rtcPeerConnection:typeof RTCPeerConnection!=='undefined',rtcStatsReport:typeof RTCStatsReport!=='undefined'},
+    input:{pointerLock:'pointerLockElement' in document,keyboardLock:!!navigator.keyboard&&typeof navigator.keyboard.lock==='function'&&typeof navigator.keyboard.unlock==='function',touch:navigator.maxTouchPoints>0||'ontouchstart' in window},
+    display:{fullscreen:!!(document.fullscreenEnabled||document.webkitFullscreenEnabled),dynamicRangeHigh:mq('(dynamic-range: high)')}
   };
 }
 
@@ -454,171 +364,31 @@ function inferLab() {
 }
 
 const S = {
-  bootPerf: now(),
-  bootDate: new Date(),
-  recording: true,
   sessionStartPerf: now(),
-  sessionStartDate: new Date(),
   samples: new Ring(MAX_SAMPLES),
-  events: new Ring(MAX_EVENTS),
   importantEvents: new Ring(MAX_IMPORTANT_EVENTS),
-  inputProbe: {
-    enabled: false,
-    bound: false,
-    startedAtSec: null,
-    stoppedAtSec: null,
-    events: new Ring(MAX_INPUT_PROBE_EVENTS),
-    lastEvent: null,
-    handlers: null,
-    autoStopTimer: null,
-    keyDownCodes: Object.create(null),
-    counters: {
-      keydown:0,keyup:0,pointerdown:0,pointerup:0,mousedown:0,mouseup:0,contextmenu:0,
-      mouseDownWhileOtherHeld:0,multiButtonStateEvents:0,fullscreenchange:0,pointerlockchange:0,
-      visibilitychange:0,windowBlur:0,windowFocus:0
-    },
-    keyboardLock: {
-      supported: !!navigator.keyboard && typeof navigator.keyboard.lock === 'function' && typeof navigator.keyboard.unlock === 'function',
-      active: false,
-      owner: null,
-      requestedCodes: [],
-      requestCount: 0,
-      successCount: 0,
-      failureCount: 0,
-      lastError: null,
-      lastChangeAtSec: null
-    }
-  },
-  mouseTransport: {
-    enabled: false,
-    startedAtSec: null,
-    stoppedAtSec: null,
-    autoStopTimer: null,
-    inputProbeOwned: false,
-    events: new Ring(MAX_MOUSE_TRANSPORT_EVENTS),
-    lastEvent: null,
-    lastDomEvent: null,
-    domSeq: 0,
-    counters: {
-      domEvents:0,pointerdown:0,pointerup:0,mousedown:0,mouseup:0,
-      singleButtonMouseDowns:0,multiButtonMouseDowns:0,
-      transportSends:0,rtcDataChannelSends:0,clientDataChannelSends:0,
-      correlatedSends:0,buttonPackets:0,movePackets:0,
-      buttonStacksCaptured:0,moveStacksCaptured:0,stackParseErrors:0,transportErrors:0,
-      pointerListenerRegistrations:0,pointerHandlerCandidates:0,sourceInspections:0,
-      senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0,listenerCallShapesFound:0,targetSenderRefsFound:0
-    },
-    pageObserver: {
-      installed:false,rtcDataChannelHook:false,addEventListenerHook:false,clientDataChannelSeen:false,
-      pageSendCount:0,pageCorrelatedCount:0,buttonPackets:0,movePackets:0,
-      buttonStacksCaptured:0,moveStacksCaptured:0,pointerListenerRegistrations:0,
-      pointerHandlerCandidates:0,sourceInspections:0,senderDefinitionsFound:0,
-      senderCallShapesFound:0,globalSenderRefsFound:0,listenerCallShapesFound:0,targetSenderRefsFound:0,lastState:null,
-      listenerCandidates:[],sourceFindings:[],globalSenderRefs:[],targetSenderRefs:[]
-    }
-  },
   mouseChordFix: {
     enabled:false,
     installed:false,
     eventHandlerResolved:false,
     guardPatched:false,
-    wsHook:false,
-    rtcHook:false,
-    startedAtSec:null,
-    stoppedAtSec:null,
-    events:new Ring(MAX_CHORD_FIX_EVENTS),
-    lastEvent:null,
-    counters:{
-      patchAttempts:0,patchErrors:0,guardCalls:0,chordCandidates:0,guardBypasses:0,
-      wsButtonMatches:0,rtcButtonMatches:0,pairedSameIdCmd:0,pairedDifferentIdCmd:0,incompletePairs:0
-    },
-    caseCounts:{
-      LMB_DOWN_WHILE_RMB:0,LMB_UP_WHILE_RMB:0,RMB_DOWN_WHILE_LMB:0,RMB_UP_WHILE_LMB:0
-    },
-    lastPair:null,
-    pageState:null
+    patchAttempts:0,
+    patchErrors:0,
+    lastError:null,
+    startedAtSec:null
   },
   immersive: {
-    phase: 'OFF',
-    active: false,
-    entering: false,
-    exiting: false,
-    bound: false,
-    handlers: null,
-    target: null,
-    targetLabel: null,
-    fullscreenOwned: false,
-    pointerLockOwned: false,
-    pointerLockPreexistingAtEnter: false,
-    nativePointerLockArmed: false,
-    nativePointerLockArmCount: 0,
-    nativePointerLockAcquisitionCount: 0,
-    directPointerLockRequestCount: 0,
-    keyboardLockOwned: false,
-    panelWasOpen: false,
-    guardianState: 'OFF',
-    shadowButtons: 0,
-    shadowKeys: Object.create(null),
-    suspendCount: 0,
-    resumeCount: 0,
-    possibleStuckInputCount: 0,
-    lastSuspension: null,
-    lastResume: null,
-    lastPossibleStuckInput: null,
-    enteredAtSec: null,
-    exitedAtSec: null,
-    enterCount: 0,
-    exitCount: 0,
-    pointerLockRequestCount: 0,
-    pointerLockSuccessCount: 0,
-    pointerLockFailureCount: 0,
-    keyboardLockRequestCount: 0,
-    keyboardLockSuccessCount: 0,
-    keyboardLockFailureCount: 0,
-    lastError: null,
-    lastReason: null,
-    overlay: null
+    phase:'OFF', active:false, entering:false, exiting:false, bound:false, handlers:null,
+    target:null, targetLabel:null, fullscreenOwned:false,
+    pointerLockOwned:false, pointerLockPreexistingAtEnter:false,
+    nativePointerLockArmed:false, nativePointerLockArmCount:0, nativePointerLockAcquisitionCount:0,
+    directPointerLockRequestCount:0,
+    keyboardLockOwned:false, keyboardLockRequestCount:0, keyboardLockSuccessCount:0, keyboardLockFailureCount:0,
+    panelWasOpen:false, enteredAtSec:null, exitedAtSec:null, enterCount:0, exitCount:0,
+    pointerLockSuccessCount:0, pointerLockFailureCount:0,
+    lastError:null, lastReason:null, overlay:null
   },
   latestSample: null,
-  longSession: {
-    checkpoints: new Ring(MAX_LONG_SESSION_CHECKPOINTS),
-    timer: null,
-    running: false,
-    lastMemoryProbeAtMs: -Infinity,
-    lastStorageProbeAtMs: -Infinity,
-    memoryProbeInFlight: false,
-    latestMemory: null,
-    latestStorage: null,
-    longTaskObserver: null,
-    longTasks: { count:0, totalMs:0, maxMs:0, lastAtSec:null, prevCount:0, prevTotalMs:0 },
-    pressureObserver: null,
-    pressure: { supported: typeof globalThis.PressureObserver === 'function', state:null, lastAtSec:null, transitions:0, error:null },
-    videoBindCount: 0,
-    videoRemovedCount: 0,
-    surfaceObserverBindCount: 0,
-    checkpointErrors: 0,
-    persistence: {
-      supported: typeof indexedDB !== 'undefined',
-      eligible: IS_STREAM_DOCUMENT,
-      mode: 'UNINITIALIZED',
-      db: null,
-      ready: false,
-      initInFlight: null,
-      sessionId: null,
-      pageInstanceId: null,
-      startedAtMs: null,
-      resumed: false,
-      recoveredCheckpointCount: 0,
-      persistedCheckpointCount: 0,
-      nextSeq: 0,
-      lastPersistAtMs: null,
-      lastPersistReason: null,
-      writeErrors: 0,
-      readErrors: 0,
-      pruneErrors: 0,
-      lifecycleBound: false
-    }
-  },
   lab: lsGet(K.lab, inferLab()),
   network: lsGet(K.network, 'OTHER'),
   mode: AUTO_PROFILE_ENABLED_AT_BOOT ? 'AUTO' : 'SAFE',
@@ -629,8 +399,6 @@ const S = {
   firstVideoAt: null,
   firstMetadataAt: null,
   firstPlayingAt: null,
-  firstFrameAt: null,
-  lastFrameAt: null,
   videoState: {
     resolution: null,
     rendered: null,
@@ -653,82 +421,14 @@ const S = {
     stableCount: 0,
     requiredStableSamples: STARTUP_STABLE_SAMPLES
   },
-  surface: {
-    resizeObserver: null,
-    globalBound: false,
-    pending: false,
-    pendingTimer: null,
-    pendingReason: null,
-    renderedKey: '',
-    rendered: null,
-    viewportKey: '',
-    viewport: null,
-    orientation: null,
-    styleKey: '',
-    objectFit: null,
-    objectPosition: null
-  },
-  frame: {
-    lastNow: 0,
-    lastPresentedFrames: null,
-    lastCallbackPresentedFrames: null,
-    prevSamplePresentedFrames: null,
-    prevSampleCallbacks: 0,
-    prevSampleTime: null,
-    callbacks: 0,
-    intervalCount: 0,
-    intervalSum: 0,
-    intervalSumSq: 0,
-    intervalMin: Infinity,
-    intervalMax: 0,
-    processingCount: 0,
-    processingSumMs: 0,
-    latenessCount: 0,
-    latenessSumMs: 0,
-    multiFrameCallbacks: 0,
-    histogram: new Uint32Array(FRAME_HIST_BINS),
-    histCount: 0,
-    histSum: 0,
-    histSumSq: 0,
-    histMin: Infinity,
-    histMax: 0,
-    regime: null,
-    regimeCandidate: null,
-    regimeCandidateCount: 0
-  },
-  deep: {
-    enabled: false,
-    token: 0,
-    callbackScheduled: false,
-    enableCount: 0,
-    disableCount: 0,
-    enabledAtSec: null,
-    lastDisabledAtSec: null,
-    totalEnabledMs: 0,
-    callbacksProcessed: 0,
-    callbacksDiscarded: 0,
-    callbackWorkCount: 0,
-    callbackWorkTotalMs: 0,
-    callbackWorkMaxMs: 0,
-    callbackWorkHistogram: new Uint32Array(DEEP_WORK_BINS),
-    prevSampleCallbacksProcessed: 0,
-    prevSampleWorkTotalMs: 0
-  },
+  surface: { globalBound:false },
   rtcPrev: null,
-  playbackPrev: null,
-  rtcLatest: null,
-  rtcSource: null,
   contextLatest: null,
-  contextFingerprint: '',
-  contextRawFingerprint: '',
-  contextTelemetry: { changes:0, suppressedFrameRateOnly:0, frameRateSamples:0, implausibleFrameRateSamples:0, lastObservedFrameRate:null },
   lastContextAt: 0,
   lastCodec: null,
   lastInboundResolution: null,
   lastPcState: null,
   lastBitrateSource: null,
-  lastAnomalySignature: '',
-  lastAnomalyAt: -Infinity,
   control: {
     state: PENDING_RESOLUTION_ONE_SHOT ? 'ACTIVE' : 'SAFE',
     armedAtSec: null,
@@ -755,12 +455,6 @@ const S = {
     oneShot: PENDING_RESOLUTION_ONE_SHOT,
     oneShotConsumed: false,
     applyBusy: false,
-    confoundSignature: ''
-  },
-  experimentManager: {
-    seq: 0,
-    currentPhaseId: 'E0',
-    phases: [PENDING_RESOLUTION_ONE_SHOT ? { id:'E0', label:`RES_${PENDING_RESOLUTION_ONE_SHOT.target.width}x${PENDING_RESOLUTION_ONE_SHOT.target.height}_AUTO`, kind:'VIRTUAL_MONITOR', startAtSec:0, endAtSec:null, requestedResolution:PENDING_RESOLUTION_ONE_SHOT.target, application:{source:'PERSISTENT_AUTO_PROFILE'}, proofFinal:null } : { id: 'E0', label: 'BASELINE', kind: 'BASELINE', startAtSec: 0, endAtSec: null, requestedResolution: null, application: null, proofFinal: null }]
   },
   sampler: {
     running: false,
@@ -774,12 +468,6 @@ const S = {
     lastContextWallMs: null,
     lastUiCostMs: null
   },
-  exportPerf: {
-    analysisBuildWallMs: null,
-    firstStringifyWallMs: null,
-    finalStringifyWallMs: null,
-    jsonBytes: null
-  },
   ui: {
     open: false,
     built: false
@@ -791,978 +479,91 @@ function elapsed() {
 }
 
 function addEvent(type, data = {}) {
-  if (!S.recording && !['RECORDING_START', 'EXPORT'].includes(type)) return;
   const event={
     t: round(elapsed(), 3),
     type,
     ...data
   };
-  S.events.push(event);
   if (IMPORTANT_EVENT_TYPES.has(type)) S.importantEvents.push(event);
 }
 
 
 // -----------------------------------------------------------------------------
-// INPUT COMPATIBILITY PROBE - ON DEMAND, OBSERVATIONAL BY DEFAULT
-// Captures DOM evidence for reserved keyboard keys, fullscreen/focus transitions
-// and simultaneous mouse-button behavior. It does not synthesize remote input.
-// Keyboard Lock is a separate reversible user-triggered experiment.
+// PRODUCTION DOM HELPERS
 // -----------------------------------------------------------------------------
 function fullscreenElementCompat() {
   return document.fullscreenElement || document.webkitFullscreenElement || null;
 }
 
-function inputProbeTargetView(target) {
-  if (!target || typeof target !== 'object') return null;
-  let tag=null, isBcsUi=false;
-  try {
-    tag=target.tagName || target.nodeName || null;
-    isBcsUi=!!target.closest?.('#bcs-panel,#bcs-open');
-  } catch {}
-  return { tag, isBcsUi };
-}
-
-function pushInputProbeEvent(type, data = {}, force = false) {
-  const P=S.inputProbe;
-  if (!force && !P.enabled) return null;
-  const event={
-    t:round(elapsed(),3),
-    wallAt:new Date().toISOString(),
-    type,
-    fullscreen:!!fullscreenElementCompat(),
-    pointerLocked:!!document.pointerLockElement,
-    visibilityState:document.visibilityState || null,
-    documentHasFocus:typeof document.hasFocus === 'function' ? document.hasFocus() : null,
-    ...data
-  };
-  P.events.push(event);
-  P.lastEvent=event;
-  return event;
-}
-
-function inputKeyboardEventView(e) {
-  return {
-    code:e.code || null,
-    key:e.key && e.key.length > 1 ? e.key : null,
-    repeat:!!e.repeat,
-    location:Number.isFinite(e.location) ? e.location : null,
-    altKey:!!e.altKey,
-    ctrlKey:!!e.ctrlKey,
-    shiftKey:!!e.shiftKey,
-    metaKey:!!e.metaKey,
-    isTrusted:e.isTrusted === true,
-    defaultPreventedAtCapture:!!e.defaultPrevented,
-    defaultPreventedAfterDispatch:null,
-    target:inputProbeTargetView(e.target)
-  };
-}
-
-function inputPointerEventView(e) {
-  const buttons=Number.isFinite(e.buttons) ? e.buttons : null;
-  return {
-    button:Number.isFinite(e.button) ? e.button : null,
-    buttons,
-    multiButtonState:Number.isFinite(buttons) ? (buttons !== 0 && (buttons & (buttons - 1)) !== 0) : null,
-    pointerType:e.pointerType || null,
-    pointerId:Number.isFinite(e.pointerId) ? e.pointerId : null,
-    isPrimary:typeof e.isPrimary === 'boolean' ? e.isPrimary : null,
-    isTrusted:e.isTrusted === true,
-    defaultPreventedAtCapture:!!e.defaultPrevented,
-    defaultPreventedAfterDispatch:null,
-    target:inputProbeTargetView(e.target)
-  };
-}
-
-function noteDefaultPreventedAfterDispatch(record, e) {
-  if (!record) return;
-  const apply=() => { try { record.defaultPreventedAfterDispatch=!!e.defaultPrevented; } catch {} };
-  if (typeof queueMicrotask === 'function') queueMicrotask(apply);
-  else Promise.resolve().then(apply);
-}
-
-function inputProbeEventSummaryLabel(event) {
-  if (!event) return '--';
-  if (event.code) return `${event.type}: ${event.code}${event.altKey ? ' +ALT' : ''}${event.ctrlKey ? ' +CTRL' : ''}${event.shiftKey ? ' +SHIFT' : ''}`;
-  if (Number.isFinite(event.button) || Number.isFinite(event.buttons)) return `${event.type}: b=${event.button ?? '-'} buttons=${event.buttons ?? '-'}`;
-  return event.type || '--';
-}
-
-function resetInputProbeTelemetry(keepEnabled = true) {
-  const P=S.inputProbe;
-  P.events.clear();
-  P.lastEvent=null;
-  P.keyDownCodes=Object.create(null);
-  P.counters={
-    keydown:0,keyup:0,pointerdown:0,pointerup:0,mousedown:0,mouseup:0,contextmenu:0,
-    mouseDownWhileOtherHeld:0,multiButtonStateEvents:0,fullscreenchange:0,pointerlockchange:0,
-    visibilitychange:0,windowBlur:0,windowFocus:0
-  };
-  if (!keepEnabled) {
-    P.startedAtSec=null;
-    P.stoppedAtSec=null;
-  }
-}
-
-function bindInputProbeEvents() {
-  const P=S.inputProbe;
-  if (P.bound) return;
-
-  const onKeyDown=e => {
-    if (!P.enabled) return;
-    P.counters.keydown++;
-    const code=e.code || e.key || 'UNKNOWN';
-    P.keyDownCodes[code]=(P.keyDownCodes[code]||0)+1;
-    const rec=pushInputProbeEvent('KEYDOWN',inputKeyboardEventView(e));
-    noteDefaultPreventedAfterDispatch(rec,e);
-  };
-  const onKeyUp=e => {
-    if (!P.enabled) return;
-    P.counters.keyup++;
-    const rec=pushInputProbeEvent('KEYUP',inputKeyboardEventView(e));
-    noteDefaultPreventedAfterDispatch(rec,e);
-  };
-  const onPointerDown=e => {
-    if (!P.enabled) return;
-    P.counters.pointerdown++;
-    const view=inputPointerEventView(e);
-    if (view.multiButtonState) P.counters.multiButtonStateEvents++;
-    const rec=pushInputProbeEvent('POINTERDOWN',view);
-    noteMouseTransportDomEvent('POINTERDOWN',view);
-    noteDefaultPreventedAfterDispatch(rec,e);
-  };
-  const onPointerUp=e => {
-    if (!P.enabled) return;
-    P.counters.pointerup++;
-    const view=inputPointerEventView(e);
-    if (view.multiButtonState) P.counters.multiButtonStateEvents++;
-    const rec=pushInputProbeEvent('POINTERUP',view);
-    noteMouseTransportDomEvent('POINTERUP',view);
-    noteDefaultPreventedAfterDispatch(rec,e);
-  };
-  const onMouseDown=e => {
-    if (!P.enabled) return;
-    P.counters.mousedown++;
-    const view=inputPointerEventView(e);
-    const pressedMask=Number.isFinite(view.buttons) ? view.buttons : 0;
-    // MouseEvent.button mapping differs from buttons bitmask. Explicit masks avoid relying on array math below.
-    const buttonMask=view.button===0?1:view.button===1?4:view.button===2?2:view.button===3?8:view.button===4?16:0;
-    const otherHeld=buttonMask ? (pressedMask & ~buttonMask) !== 0 : (view.multiButtonState === true);
-    if (otherHeld) P.counters.mouseDownWhileOtherHeld++;
-    if (view.multiButtonState) P.counters.multiButtonStateEvents++;
-    const rec=pushInputProbeEvent('MOUSEDOWN',{...view,otherButtonAlreadyHeld:otherHeld});
-    noteMouseTransportDomEvent('MOUSEDOWN',{...view,otherButtonAlreadyHeld:otherHeld});
-    noteDefaultPreventedAfterDispatch(rec,e);
-  };
-  const onMouseUp=e => {
-    if (!P.enabled) return;
-    P.counters.mouseup++;
-    const view=inputPointerEventView(e);
-    if (view.multiButtonState) P.counters.multiButtonStateEvents++;
-    const rec=pushInputProbeEvent('MOUSEUP',view);
-    noteMouseTransportDomEvent('MOUSEUP',view);
-    noteDefaultPreventedAfterDispatch(rec,e);
-  };
-  const onContextMenu=e => {
-    if (!P.enabled) return;
-    P.counters.contextmenu++;
-    const rec=pushInputProbeEvent('CONTEXTMENU',inputPointerEventView(e));
-    noteDefaultPreventedAfterDispatch(rec,e);
-  };
-  const onFullscreen=() => {
-    if (!P.enabled && !P.keyboardLock.active) return;
-    P.counters.fullscreenchange++;
-    const active=!!fullscreenElementCompat();
-    pushInputProbeEvent('FULLSCREEN_CHANGE',{active},P.keyboardLock.active);
-    if (!active && P.keyboardLock.active) {
-      P.keyboardLock.active=false;
-      P.keyboardLock.owner=null;
-      P.keyboardLock.requestedCodes=[];
-      P.keyboardLock.lastChangeAtSec=round(elapsed(),3);
-      addEvent('INPUT_KEYBOARD_LOCK_CHANGE',{active:false,reason:'FULLSCREEN_EXIT'});
-    }
-    updateUI();
-  };
-  const onPointerLock=() => {
-    if (!P.enabled) return;
-    P.counters.pointerlockchange++;
-    pushInputProbeEvent('POINTER_LOCK_CHANGE',{active:!!document.pointerLockElement});
-    updateUI();
-  };
-  const onVisibility=() => {
-    if (!P.enabled) return;
-    P.counters.visibilitychange++;
-    pushInputProbeEvent('VISIBILITY_CHANGE',{hidden:!!document.hidden,state:document.visibilityState || null});
-  };
-  const onBlur=() => {
-    if (!P.enabled) return;
-    P.counters.windowBlur++;
-    pushInputProbeEvent('WINDOW_BLUR');
-  };
-  const onFocus=() => {
-    if (!P.enabled) return;
-    P.counters.windowFocus++;
-    pushInputProbeEvent('WINDOW_FOCUS');
-  };
-
-  P.handlers={onKeyDown,onKeyUp,onPointerDown,onPointerUp,onMouseDown,onMouseUp,onContextMenu,onFullscreen,onPointerLock,onVisibility,onBlur,onFocus};
-  window.addEventListener('keydown',onKeyDown,true);
-  window.addEventListener('keyup',onKeyUp,true);
-  window.addEventListener('pointerdown',onPointerDown,true);
-  window.addEventListener('pointerup',onPointerUp,true);
-  window.addEventListener('mousedown',onMouseDown,true);
-  window.addEventListener('mouseup',onMouseUp,true);
-  window.addEventListener('contextmenu',onContextMenu,true);
-  document.addEventListener('fullscreenchange',onFullscreen,true);
-  document.addEventListener('webkitfullscreenchange',onFullscreen,true);
-  document.addEventListener('pointerlockchange',onPointerLock,true);
-  document.addEventListener('visibilitychange',onVisibility,true);
-  window.addEventListener('blur',onBlur,true);
-  window.addEventListener('focus',onFocus,true);
-  P.bound=true;
-}
-
-function unbindInputProbeEvents() {
-  const P=S.inputProbe;
-  if (!P.bound || !P.handlers) return;
-  const h=P.handlers;
-  window.removeEventListener('keydown',h.onKeyDown,true);
-  window.removeEventListener('keyup',h.onKeyUp,true);
-  window.removeEventListener('pointerdown',h.onPointerDown,true);
-  window.removeEventListener('pointerup',h.onPointerUp,true);
-  window.removeEventListener('mousedown',h.onMouseDown,true);
-  window.removeEventListener('mouseup',h.onMouseUp,true);
-  window.removeEventListener('contextmenu',h.onContextMenu,true);
-  document.removeEventListener('fullscreenchange',h.onFullscreen,true);
-  document.removeEventListener('webkitfullscreenchange',h.onFullscreen,true);
-  document.removeEventListener('pointerlockchange',h.onPointerLock,true);
-  document.removeEventListener('visibilitychange',h.onVisibility,true);
-  window.removeEventListener('blur',h.onBlur,true);
-  window.removeEventListener('focus',h.onFocus,true);
-  P.handlers=null;
-  P.bound=false;
-}
-
-function setInputProbeEnabled(enabled, reason='UI') {
-  const P=S.inputProbe;
-  enabled=!!enabled;
-  if (enabled === P.enabled) return;
-  if (enabled) {
-    resetInputProbeTelemetry(true);
-    bindInputProbeEvents();
-    P.enabled=true;
-    P.startedAtSec=round(elapsed(),3);
-    P.stoppedAtSec=null;
-    if (P.autoStopTimer) clearTimeout(P.autoStopTimer);
-    P.autoStopTimer=setTimeout(() => setInputProbeEnabled(false,'AUTO_TIMEOUT'), INPUT_PROBE_AUTO_STOP_MS);
-    pushInputProbeEvent('PROBE_START',{reason,autoStopMs:INPUT_PROBE_AUTO_STOP_MS},true);
-    addEvent('INPUT_PROBE_START',{reason,maxEvents:MAX_INPUT_PROBE_EVENTS,autoStopMs:INPUT_PROBE_AUTO_STOP_MS});
-  } else {
-    pushInputProbeEvent('PROBE_STOP',{reason},true);
-    P.enabled=false;
-    P.stoppedAtSec=round(elapsed(),3);
-    if (P.autoStopTimer) { clearTimeout(P.autoStopTimer); P.autoStopTimer=null; }
-    void releaseKeyboardLock(`PROBE_STOP_${reason}`,'PROBE');
-    unbindInputProbeEvents();
-    addEvent('INPUT_PROBE_STOP',{reason,eventCount:P.events.count});
-  }
-  updateUI();
-}
-
-async function requestKeyboardLockForGameKeys() {
-  const P=S.inputProbe;
-  const Kb=P.keyboardLock;
-  Kb.requestCount++;
-  if (!Kb.supported) {
-    Kb.failureCount++;
-    Kb.lastError='KEYBOARD_LOCK_UNSUPPORTED';
-    pushInputProbeEvent('KEYBOARD_LOCK_ERROR',{error:Kb.lastError},true);
-    addEvent('INPUT_KEYBOARD_LOCK_ERROR',{error:Kb.lastError});
-    updateUI();
-    return false;
-  }
-  if (!fullscreenElementCompat()) {
-    Kb.failureCount++;
-    Kb.lastError='FULLSCREEN_REQUIRED_FOR_LOCK_TEST';
-    pushInputProbeEvent('KEYBOARD_LOCK_ERROR',{error:Kb.lastError},true);
-    addEvent('INPUT_KEYBOARD_LOCK_ERROR',{error:Kb.lastError});
-    updateUI();
-    return false;
-  }
-  try {
-    const codes=[...IMMERSIVE_KEY_CODES];
-    await navigator.keyboard.lock(codes);
-    Kb.active=true;
-    Kb.owner='PROBE';
-    Kb.requestedCodes=codes;
-    Kb.successCount++;
-    Kb.lastError=null;
-    Kb.lastChangeAtSec=round(elapsed(),3);
-    pushInputProbeEvent('KEYBOARD_LOCK_CHANGE',{active:true,codes,reason:'USER_TEST'},true);
-    addEvent('INPUT_KEYBOARD_LOCK_CHANGE',{active:true,codes,reason:'USER_TEST'});
-    updateUI();
-    return true;
-  } catch (e) {
-    Kb.active=false;
-    Kb.owner=null;
-    Kb.requestedCodes=[];
-    Kb.failureCount++;
-    Kb.lastError=String(e?.name || e?.message || e).slice(0,180);
-    pushInputProbeEvent('KEYBOARD_LOCK_ERROR',{error:Kb.lastError},true);
-    addEvent('INPUT_KEYBOARD_LOCK_ERROR',{error:Kb.lastError});
-    updateUI();
-    return false;
-  }
-}
-
-async function releaseKeyboardLock(reason='USER', expectedOwner=null) {
-  const P=S.inputProbe;
-  const Kb=P.keyboardLock;
-  if (!Kb.supported) return false;
-  if (expectedOwner && Kb.owner && Kb.owner !== expectedOwner) return false;
-  try { navigator.keyboard.unlock(); } catch {}
-  const wasActive=Kb.active;
-  const previousOwner=Kb.owner;
-  Kb.active=false;
-  Kb.owner=null;
-  Kb.requestedCodes=[];
-  Kb.lastChangeAtSec=round(elapsed(),3);
-  if (wasActive) {
-    pushInputProbeEvent('KEYBOARD_LOCK_CHANGE',{active:false,reason,owner:previousOwner},true);
-    addEvent('INPUT_KEYBOARD_LOCK_CHANGE',{active:false,reason,owner:previousOwner});
-  }
-  updateUI();
-  return true;
-}
-
-function inputProbeSnapshot() {
-  const P=S.inputProbe;
-  return {
-    schemaVersion:1,
-    enabled:P.enabled,
-    observationalByDefault:true,
-    syntheticKeyboardEvents:false,
-    remoteInputTransportOverride:false,
-    maxEvents:MAX_INPUT_PROBE_EVENTS,
-    autoStopMs:INPUT_PROBE_AUTO_STOP_MS,
-    retainedEvents:P.events.count,
-    overwrittenEvents:Math.max(0,P.events.total-P.events.count),
-    startedAtSec:P.startedAtSec,
-    stoppedAtSec:P.stoppedAtSec,
-    counters:{...P.counters},
-    keyDownCodes:{...P.keyDownCodes},
-    keyboardLock:{...P.keyboardLock},
-    latestEvent:P.lastEvent,
-    currentState:{
-      fullscreen:!!fullscreenElementCompat(),
-      pointerLocked:!!document.pointerLockElement,
-      visibilityState:document.visibilityState || null,
-      documentHasFocus:typeof document.hasFocus === 'function' ? document.hasFocus() : null
-    },
-    diagnosticSemantics:{
-      escape:'Compare KEYDOWN/KEYUP Escape with FULLSCREEN_CHANGE. If Escape is delivered and fullscreen exits, browser default action is implicated; Keyboard Lock test can distinguish capture behavior.',
-      altTab:'Compare AltLeft/AltRight + Tab KEYDOWN against WINDOW_BLUR/VISIBILITY_CHANGE. Missing Tab before blur suggests interception above page JS.',
-      simultaneousMouse:'Compare MOUSEDOWN and POINTERDOWN while buttons bitmask contains multiple buttons. Physical mouse can emit MOUSEDOWN for the second button without a second POINTERDOWN.'
-    },
-    events:P.events.toArray()
-  };
-}
-
-
 // -----------------------------------------------------------------------------
-// NATIVE HANDLER CALL SHAPE DISCOVERY - RC13 / H-014C
-// RC11 LIVE identified the working native button pipeline and RC12 LIVE proved
-// sendMouseButtonEvent(event, pressedStatus) plus the registered VIDEO handlers:
-//   mousedown/up -> getMouseButtonEvent(event)
-//   pointerdown/up -> handlePointerMouseButtonEvent(event)
-// RC13 remains observational-only. It analyzes Function#toString() for those
-// already-registered handlers to extract only sanitized call shapes, guards,
-// receiver paths, and candidate target/prototype method references. It never
-// invokes the handlers/sender, never replaces listeners, and never mutates input.
+// H-014C PRODUCTION FIX - MINIMAL COMPATIBILITY GUARD BYPASS
+// Proven by RC15 LIVE. Production path deliberately excludes transport capture,
+// packet parsing, id_cmd pairing, correlation timers and per-click telemetry.
 // -----------------------------------------------------------------------------
-function pushMouseTransportEvent(type, data = {}, force = false) {
-  const M=S.mouseTransport;
-  if (!force && !M.enabled) return null;
-  const event={t:round(elapsed(),3),wallAt:new Date().toISOString(),type,...data};
-  M.events.push(event);
-  M.lastEvent=event;
-  return event;
-}
-
-function resetMouseTransportTelemetry() {
-  const M=S.mouseTransport;
-  M.events.clear(); M.lastEvent=null; M.lastDomEvent=null; M.domSeq=0;
-  M.counters={
-    domEvents:0,pointerdown:0,pointerup:0,mousedown:0,mouseup:0,
-    singleButtonMouseDowns:0,multiButtonMouseDowns:0,
-    transportSends:0,rtcDataChannelSends:0,clientDataChannelSends:0,
-    correlatedSends:0,buttonPackets:0,movePackets:0,
-    buttonStacksCaptured:0,moveStacksCaptured:0,stackParseErrors:0,transportErrors:0,
-    pointerListenerRegistrations:0,pointerHandlerCandidates:0,sourceInspections:0,
-    senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0,
-    listenerCallShapesFound:0,targetSenderRefsFound:0
-  };
-  Object.assign(M.pageObserver,{
-    pageSendCount:0,pageCorrelatedCount:0,clientDataChannelSeen:false,
-    buttonPackets:0,movePackets:0,buttonStacksCaptured:0,moveStacksCaptured:0,
-    pointerListenerRegistrations:0,pointerHandlerCandidates:0,sourceInspections:0,
-    senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0,
-    listenerCallShapesFound:0,targetSenderRefsFound:0,
-    listenerCandidates:[],sourceFindings:[],globalSenderRefs:[],targetSenderRefs:[],lastState:null
-  });
-}
-
-function dispatchMouseTransportControl(detail) {
-  try { document.dispatchEvent(new CustomEvent(MOUSE_TRANSPORT_CONTROL_EVENT,{detail})); }
-  catch (e) { pushMouseTransportEvent('CONTROL_ERROR',{error:String(e?.message||e).slice(0,180)},true); }
-}
-
-function mouseDomCase(record) {
-  if (!record) return 'UNKNOWN';
-  const b=record.button, bs=record.buttons, t=record.domType;
-  if (t==='POINTERDOWN' && b===0 && bs===1) return 'LMB_DOWN_SINGLE';
-  if (t==='POINTERDOWN' && b===2 && bs===2) return 'RMB_DOWN_SINGLE';
-  if (t==='POINTERUP' && b===0 && bs===0) return 'LMB_UP_SINGLE';
-  if (t==='POINTERUP' && b===2 && bs===0) return 'RMB_UP_SINGLE';
-  if (t==='MOUSEDOWN' && b===0 && bs===3) return 'LMB_DOWN_WHILE_RMB';
-  if (t==='MOUSEDOWN' && b===2 && bs===3) return 'RMB_DOWN_WHILE_LMB';
-  if (t==='MOUSEUP' && b===0 && bs===2) return 'LMB_UP_WHILE_RMB';
-  if (t==='MOUSEUP' && b===2 && bs===1) return 'RMB_UP_WHILE_LMB';
-  return `${t||'EVENT'}_B${Number.isFinite(b)?b:'X'}_BS${Number.isFinite(bs)?bs:'X'}`;
-}
-
-function noteMouseTransportDomEvent(type, view) {
-  const M=S.mouseTransport;
-  if (!M.enabled || !view || view.target?.isBcsUi) return;
-  if (!['POINTERDOWN','POINTERUP','MOUSEDOWN','MOUSEUP'].includes(type)) return;
-  const record={
-    domSeq:++M.domSeq,domType:type,perfNowMs:round(now(),3),
-    button:Number.isFinite(view.button)?view.button:null,
-    buttons:Number.isFinite(view.buttons)?view.buttons:null,
-    multiButtonState:view.multiButtonState===true,
-    otherButtonAlreadyHeld:view.otherButtonAlreadyHeld===true,
-    target:view.target || null
-  };
-  record.case=mouseDomCase(record);
-  M.lastDomEvent=record; M.counters.domEvents++;
-  const key=type.toLowerCase(); if (key in M.counters) M.counters[key]++;
-  if (type==='MOUSEDOWN') {
-    if (record.multiButtonState || record.otherButtonAlreadyHeld) M.counters.multiButtonMouseDowns++;
-    else M.counters.singleButtonMouseDowns++;
-  }
-  pushMouseTransportEvent('DOM_MOUSE_TRANSITION',record);
-  dispatchMouseTransportControl({action:'MARK',mark:record,correlationMs:MOUSE_TRANSPORT_CORRELATION_MS});
-}
-
-function syncMouseObserverState(detail) {
-  const M=S.mouseTransport;
-  M.pageObserver.installed=detail.installed===true;
-  M.pageObserver.rtcDataChannelHook=detail.hooks?.rtcDataChannel===true;
-  M.pageObserver.addEventListenerHook=detail.hooks?.addEventListener===true;
-  M.pageObserver.clientDataChannelSeen=detail.clientDataChannelSeen===true;
-  M.pageObserver.lastState=detail.kind;
-  const map={
-    totalSends:'pageSendCount',correlatedSends:'pageCorrelatedCount',
-    buttonPackets:'buttonPackets',movePackets:'movePackets',
-    buttonStacksCaptured:'buttonStacksCaptured',moveStacksCaptured:'moveStacksCaptured',
-    pointerListenerRegistrations:'pointerListenerRegistrations',
-    pointerHandlerCandidates:'pointerHandlerCandidates',sourceInspections:'sourceInspections',
-    senderDefinitionsFound:'senderDefinitionsFound',senderCallShapesFound:'senderCallShapesFound',
-    globalSenderRefsFound:'globalSenderRefsFound',listenerCallShapesFound:'listenerCallShapesFound',
-    targetSenderRefsFound:'targetSenderRefsFound'
-  };
-  for (const [k,v] of Object.entries(map)) if (Number.isFinite(detail[k])) M.pageObserver[v]=detail[k];
-  if (Array.isArray(detail.listenerCandidates)) M.pageObserver.listenerCandidates=detail.listenerCandidates.slice(0,24);
-  if (Array.isArray(detail.sourceFindings)) M.pageObserver.sourceFindings=detail.sourceFindings.slice(0,12);
-  if (Array.isArray(detail.globalSenderRefs)) M.pageObserver.globalSenderRefs=detail.globalSenderRefs.slice(0,12);
-  if (Array.isArray(detail.targetSenderRefs)) M.pageObserver.targetSenderRefs=detail.targetSenderRefs.slice(0,16);
-}
-
-function onMouseTransportObservation(e) {
-  const detail=e?.detail;
-  if (!detail || detail.schemaVersion!==6) return;
-  const M=S.mouseTransport;
-  if (detail.kind==='READY' || detail.kind==='STATE' || detail.kind==='DISCOVERY') {
-    syncMouseObserverState(detail);
-    pushMouseTransportEvent('PAGE_OBSERVER_'+detail.kind,{
-      hooks:detail.hooks||null,clientDataChannelSeen:M.pageObserver.clientDataChannelSeen,
-      totalSends:detail.totalSends??null,buttonPackets:detail.buttonPackets??null,
-      buttonStacksCaptured:detail.buttonStacksCaptured??null,
-      pointerListenerRegistrations:detail.pointerListenerRegistrations??null,
-      pointerHandlerCandidates:detail.pointerHandlerCandidates??null,
-      listenerCallShapesFound:detail.listenerCallShapesFound??null,
-      targetSenderRefsFound:detail.targetSenderRefsFound??null,
-      listenerCandidates:detail.listenerCandidates||null,
-      sourceFindings:detail.sourceFindings||null,targetSenderRefs:detail.targetSenderRefs||null
-    },true);
-    updateUI(); return;
-  }
-  if (!M.enabled || detail.kind!=='SEND') return;
-  M.counters.transportSends++;
-  if (detail.transport==='RTC_DATA_CHANNEL') M.counters.rtcDataChannelSends++;
-  if (detail.channel?.label==='ClientDataChannel') M.counters.clientDataChannelSends++;
-  if (detail.ok===false) M.counters.transportErrors++;
-  if (detail.packetKind==='BUTTON') M.counters.buttonPackets++;
-  if (detail.packetKind==='MOVE') M.counters.movePackets++;
-  if (detail.stack?.captured && detail.packetKind==='BUTTON') M.counters.buttonStacksCaptured++;
-  if (detail.stack?.captured && detail.packetKind==='MOVE') M.counters.moveStacksCaptured++;
-  if (detail.stack?.parseError) M.counters.stackParseErrors++;
-  const dom=detail.domMark || null;
-  const correlated=!!dom && Number.isFinite(detail.deltaMs) && detail.deltaMs>=0 && detail.deltaMs<=MOUSE_TRANSPORT_CORRELATION_MS;
-  if (correlated) M.counters.correlatedSends++;
-  pushMouseTransportEvent(detail.packetKind==='BUTTON'?'NATIVE_MOUSE_BUTTON_SEND':'NATIVE_MOUSE_MOVE_SEND',{
-    transport:detail.transport||null,ok:detail.ok!==false,packetKind:detail.packetKind||null,
-    deltaMs:Number.isFinite(detail.deltaMs)?round(detail.deltaMs,3):null,
-    domMark:dom,case:dom?.case||mouseDomCase(dom),channel:detail.channel||null,
-    button:detail.button||null,move:detail.move||null,stack:detail.stack||null,error:detail.error||null
-  });
-  updateUI();
-}
-
-function installMouseTransportObserverPage() {
-  document.addEventListener(MOUSE_TRANSPORT_OBS_EVENT,onMouseTransportObservation,true);
-  const source = String.raw`
-(() => {
-  'use strict';
-  if (window.__BCS_RC13_NATIVE_HANDLER_SHAPE_OBSERVER__) return;
-  window.__BCS_RC13_NATIVE_HANDLER_SHAPE_OBSERVER__=true;
-  const CTRL='${MOUSE_TRANSPORT_CONTROL_EVENT}';
-  const OBS='${MOUSE_TRANSPORT_OBS_EVENT}';
-  const TARGET_NAMES=['sendMouseButtonEvent','handlePointerMouseButtonEvent','getMouseButtonEvent','sendRttEvent','sendEvents','sendMessage'];
-  const state={
-    active:false,installed:false,seq:0,lastDom:null,correlationMs:${MOUSE_TRANSPORT_CORRELATION_MS},
-    totalSends:0,correlatedSends:0,clientDataChannelSeen:false,
-    hooks:{rtcDataChannel:false,addEventListener:false},
-    buttonPackets:0,movePackets:0,buttonStacksCaptured:0,moveStacksCaptured:0,
-    maxButtonStacks:24,maxMoveStacks:6,
-    pointerListenerRegistrations:0,pointerHandlerCandidates:0,
-    sourceInspections:0,senderDefinitionsFound:0,senderCallShapesFound:0,globalSenderRefsFound:0,
-    listenerCallShapesFound:0,targetSenderRefsFound:0,
-    listenerCandidates:[],listenerRefs:[],sourceFindings:[],globalSenderRefs:[],globalRefObjects:[],targetSenderRefs:[],targetRefObjects:[]
-  };
-  function fnvText(text){ let h=2166136261>>>0,s=String(text); for(let i=0;i<s.length;i++){ const c=s.charCodeAt(i); h^=c&255; h=Math.imul(h,16777619)>>>0; h^=(c>>>8)&255; h=Math.imul(h,16777619)>>>0; } return 'fnv1a32:'+('00000000'+h.toString(16)).slice(-8); }
-  function parseJson(data){ if(typeof data!=='string') return null; try { const v=JSON.parse(data); return v&&typeof v==='object'&&!Array.isArray(v)?v:null; } catch { return null; } }
-  function safeSource(raw){
-    const v=String(raw||''); if(!v) return null;
-    if(v.includes('bcs-rc13-native-handler-shape.js')) return 'bcs-rc13-native-handler-shape.js';
-    try { const u=new URL(v); if(u.protocol==='http:'||u.protocol==='https:') return u.origin+u.pathname; if(u.protocol==='blob:') return 'blob:'+u.origin; return u.protocol; } catch {}
-    return v.slice(0,180);
-  }
-  function parseFrame(line){
-    let t=String(line||'').trim(); if(!t.startsWith('at ')) return null; t=t.slice(3);
-    let fn=null,loc=t; const fm=t.match(/^(.*?) \((.*)\)$/); if(fm){ fn=fm[1]||null; loc=fm[2]; }
-    const lm=loc.match(/^(.*):(\d+):(\d+)$/); if(!lm) return {functionName:fn,source:safeSource(loc),line:null,column:null};
-    return {functionName:fn,source:safeSource(lm[1]),line:Number(lm[2]),column:Number(lm[3])};
-  }
-  function captureStack(){
-    try {
-      const raw=String(new Error('BCS_RC13_NATIVE_HANDLER_SHAPE').stack||'');
-      const frames=raw.split('\n').slice(1).map(parseFrame).filter(Boolean).slice(0,16);
-      const external=frames.filter(f=>!String(f.source||'').includes('bcs-rc13-native-handler-shape.js')).slice(0,10);
-      return {captured:true,fingerprint:fnvText(JSON.stringify(external)),caller:external[0]||null,frames:external,parseError:false};
-    } catch(e) { return {captured:false,fingerprint:null,caller:null,frames:[],parseError:true,error:String(e?.message||e).slice(0,100)}; }
-  }
-  function targetLabel(target){
-    try { if(target===window) return 'WINDOW'; if(target===document) return 'DOCUMENT'; return String(target?.tagName||target?.constructor?.name||'OBJECT').toUpperCase().slice(0,80); }
-    catch { return 'OBJECT'; }
-  }
-  function splitArgs(text){
-    const out=[]; let cur='',depth=0,quote=null,esc=false;
-    for(const ch of String(text||'')){
-      if(quote){ cur+=ch; if(esc){esc=false;continue;} if(ch==='\\'){esc=true;continue;} if(ch===quote) quote=null; continue; }
-      if(ch==='"'||ch==="'"){quote=ch;cur+=ch;continue;}
-      if(ch==='('||ch==='['||ch==='{'){depth++;cur+=ch;continue;}
-      if(ch===')'||ch===']'||ch==='}'){depth=Math.max(0,depth-1);cur+=ch;continue;}
-      if(ch===','&&depth===0){out.push(cur.trim());cur='';continue;} cur+=ch;
-    }
-    if(cur.trim()) out.push(cur.trim()); return out.slice(0,10);
-  }
-  function tokenShape(expr){
-    const s=String(expr||'').trim();
-    const propertyPaths=[...new Set(s.match(/(?:this|[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)+/g)||[])].slice(0,20);
-    const identifiers=[...new Set((s.match(/[A-Za-z_$][\w$]*/g)||[]).filter(x=>!['true','false','null','undefined'].includes(x)))].slice(0,24);
-    const literals=[]; for(const m of s.matchAll(/["']([^"']{0,40})["']/g)){ if(['pointerdown','pointerup','mousedown','mouseup','mouse','button'].includes(m[1])) literals.push(m[1]); }
-    const booleans=[...new Set(s.match(/\b(?:true|false)\b/g)||[])];
-    const numbers=[...new Set((s.match(/(?:^|[^\w.])-?\d+(?:\.\d+)?/g)||[]).map(x=>Number(x.match(/-?\d+(?:\.\d+)?/)[0])).filter(Number.isFinite).filter(n=>Math.abs(n)<=64))].slice(0,12);
-    const operators=(s.match(/===|!==|==|!=|&&|\|\||<=|>=|=>|[!?<>:]/g)||[]).slice(0,24);
-    return {length:s.length,hash:fnvText(s),propertyPaths,identifiers,literals:[...new Set(literals)],booleans,numbers,operators};
-  }
-  function balancedAt(s,openIdx,open='(',close=')'){
-    let depth=1,quote=null,esc=false;
-    for(let i=openIdx+1;i<s.length;i++){
-      const ch=s[i];
-      if(quote){ if(esc){esc=false;continue;} if(ch==='\\'){esc=true;continue;} if(ch===quote) quote=null; continue; }
-      if(ch==='"'||ch==="'"){quote=ch;continue;}
-      if(ch===open) depth++; else if(ch===close){ depth--; if(depth===0) return i; }
-    }
-    return -1;
-  }
-  function callShapesFromRaw(raw,name){
-    const s=String(raw||''), out=[]; let from=0;
-    while(out.length<8){
-      const idx=s.indexOf(name,from); if(idx<0) break;
-      const after=s.slice(idx+name.length).match(/^\s*\(/); if(!after){from=idx+name.length;continue;}
-      const openIdx=idx+name.length+after[0].lastIndexOf('(');
-      const end=balancedAt(s,openIdx); if(end<0){from=idx+name.length;continue;}
-      const pre=s.slice(Math.max(0,idx-100),idx);
-      const rm=pre.match(/((?:this|[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)*)\.\s*$/);
-      const args=splitArgs(s.slice(openIdx+1,end));
-      out.push({callee:name,receiver:rm?rm[1]:null,argCount:args.length,args:args.map(tokenShape),callHash:fnvText(s.slice(Math.max(0,idx-40),Math.min(s.length,end+40)))});
-      from=end+1;
-    }
-    return out;
-  }
-  function guardShapesFromRaw(raw){
-    const s=String(raw||''), out=[]; const re=/\bif\s*\(/g; let m;
-    while((m=re.exec(s))&&out.length<10){
-      const open=s.indexOf('(',m.index); const end=balancedAt(s,open); if(end<0) break;
-      const expr=s.slice(open+1,end);
-      if(/event|button|buttons|pointer|mouse|type|pressed/i.test(expr)) out.push(tokenShape(expr));
-      re.lastIndex=end+1;
-    }
-    return out;
-  }
-  function functionMeta(fn){
-    if(typeof fn!=='function') return null;
-    let raw=''; try { raw=Function.prototype.toString.call(fn); } catch {}
-    const compact=raw.replace(/\s+/g,' ');
-    const paramMatch=compact.match(/^[^(]*\(([^)]*)\)/) || compact.match(/^\s*([^=()]+?)\s*=>/);
-    const params=paramMatch ? String(paramMatch[1]||'').split(',').map(v=>v.trim()).filter(Boolean).slice(0,8) : [];
-    return {
-      functionName:fn.name||null,argCount:Number.isFinite(fn.length)?fn.length:null,
-      sourceHash:fnvText(raw),sourceLength:raw.length,params,
-      containsSendMouseButtonEvent:raw.includes('sendMouseButtonEvent'),
-      containsPointerdown:raw.includes('pointerdown'),containsPointerup:raw.includes('pointerup'),containsButtonToken:/\bbutton\b/.test(raw),
-      senderCalls:callShapesFromRaw(raw,'sendMouseButtonEvent'),guards:guardShapesFromRaw(raw)
-    };
-  }
-  function scanTargetForSender(target,itemId){
-    const found=[]; const seen=new Set(); let obj=target,depth=0;
-    while(obj&&depth<6&&found.length<12){
-      let keys=[]; try { keys=Object.getOwnPropertyNames(obj).slice(0,600); } catch { break; }
-      for(const key of keys){
-        if(seen.has(key+'@'+depth)) continue; seen.add(key+'@'+depth);
-        let v; try { v=obj[key]; } catch { continue; }
-        if(typeof v!=='function') continue;
-        const meta=functionMeta(v); const n=meta?.functionName||'';
-        if(key==='sendMouseButtonEvent'||n==='sendMouseButtonEvent'||key==='getMouseButtonEvent'||n==='getMouseButtonEvent'||key==='handlePointerMouseButtonEvent'||n==='handlePointerMouseButtonEvent'){
-          const ref={listenerId:itemId,target:targetLabel(target),depth,key,functionName:n||null,meta}; found.push(ref);
-          state.targetRefObjects.push({listenerId:itemId,target,owner:obj,key,fn:v,depth});
-        }
-      }
-      try { obj=Object.getPrototypeOf(obj); } catch { break; } depth++;
-    }
-    for(const f of found){
-      const key=[f.target,f.depth,f.key,f.functionName].join('|');
-      if(!state.targetSenderRefs.some(x=>[x.target,x.depth,x.key,x.functionName].join('|')===key)) state.targetSenderRefs.push(f);
-    }
-    if(state.targetSenderRefs.length>16) state.targetSenderRefs=state.targetSenderRefs.slice(-16);
-    state.targetSenderRefsFound=state.targetSenderRefs.filter(x=>x.key==='sendMouseButtonEvent'||x.functionName==='sendMouseButtonEvent').length;
-    return found;
-  }
-  function observeAddEventListener(){
-    const proto=globalThis.EventTarget?.prototype; if(!proto||typeof proto.addEventListener!=='function') return false;
-    const current=proto.addEventListener; if(current?.__bcsRc13HandlerShapeObserver===true) return true;
-    const original=current;
-    const wrapped=function(type,listener,options){
-      try {
-        const t=String(type||'').toLowerCase();
-        if((t==='pointerdown'||t==='pointerup'||t==='mousedown'||t==='mouseup') && (typeof listener==='function'||typeof listener?.handleEvent==='function')){
-          state.pointerListenerRegistrations++;
-          const fn=typeof listener==='function'?listener:listener.handleEvent;
-          const meta=functionMeta(fn);
-          const candidate=!!meta && (meta.functionName==='handlePointerMouseButtonEvent'||meta.functionName==='getMouseButtonEvent'||meta.containsSendMouseButtonEvent||/pointer.*mouse.*button/i.test(meta.functionName||''));
-          if(candidate){
-            state.pointerHandlerCandidates++;
-            const item={id:'L'+(state.listenerCandidates.length+1),eventType:t,target:targetLabel(this),capture:options===true||options?.capture===true,meta,targetRefs:[]};
-            if(meta.senderCalls?.length) state.listenerCallShapesFound+=meta.senderCalls.length;
-            item.targetRefs=scanTargetForSender(this,item.id);
-            state.listenerCandidates.push(item); if(state.listenerCandidates.length>24) state.listenerCandidates.shift();
-            state.listenerRefs.push({id:item.id,eventType:t,target:this,listener,fn}); if(state.listenerRefs.length>24) state.listenerRefs.shift();
-          }
-        }
-      } catch {}
-      return Reflect.apply(original,this,arguments);
-    };
-    try { Object.defineProperty(wrapped,'__bcsRc13HandlerShapeObserver',{value:true}); Object.defineProperty(wrapped,'__bcsOriginal',{value:original}); } catch {}
-    try { proto.addEventListener=wrapped; return proto.addEventListener===wrapped||proto.addEventListener?.__bcsRc13HandlerShapeObserver===true; } catch { return false; }
-  }
-  function refreshListenerAnalysis(){
-    state.listenerCallShapesFound=0; state.targetSenderRefs=[]; state.targetRefObjects=[]; state.targetSenderRefsFound=0;
-    for(const ref of state.listenerRefs){
-      const item=state.listenerCandidates.find(x=>x.id===ref.id); if(!item) continue;
-      item.meta=functionMeta(ref.fn); if(item.meta?.senderCalls?.length) state.listenerCallShapesFound+=item.meta.senderCalls.length;
-      item.targetRefs=scanTargetForSender(ref.target,ref.id);
-    }
-  }
-  function correlation(nowMs){ const m=state.lastDom; if(!m) return null; const delta=nowMs-Number(m.perfNowMs); if(!Number.isFinite(delta)||delta<0||delta>state.correlationMs) return null; return {mark:m,deltaMs:delta}; }
-  function emit(detail){ try { document.dispatchEvent(new CustomEvent(OBS,{detail:Object.assign({schemaVersion:6},detail)})); } catch {} }
-  function isButton(v){ return v?.type==='mouse'&&v?.action==='button'&&(v?.btn===0||v?.btn===2)&&typeof v?.isPressed==='boolean'; }
-  function isMove(v){ return v?.type==='mouse'&&v?.action==='move'; }
-  function wrapRtc(){
-    const proto=globalThis.RTCDataChannel?.prototype; if(!proto||typeof proto.send!=='function') return false;
-    const current=proto.send; if(current&&current.__bcsRc13NativeHandlerShape===true) return true;
-    const original=current;
-    const wrapped=function(data){
-      if(!state.active) return Reflect.apply(original,this,arguments);
-      const label=this?.label||null; if(label!=='ClientDataChannel') return Reflect.apply(original,this,arguments);
-      const at=performance.now(); state.totalSends++; state.clientDataChannelSeen=true;
-      const parsed=parseJson(data); let packetKind='OTHER',button=null,move=null,stack=null;
-      if(isButton(parsed)){
-        packetKind='BUTTON'; state.buttonPackets++;
-        button={btn:parsed.btn,isPressed:parsed.isPressed,from_udp:typeof parsed.from_udp==='boolean'?parsed.from_udp:null,idCmdPresent:Object.prototype.hasOwnProperty.call(parsed,'id_cmd')};
-        if(state.buttonStacksCaptured<state.maxButtonStacks){ stack=captureStack(); if(stack.captured) state.buttonStacksCaptured++; }
-      } else if(isMove(parsed)){
-        packetKind='MOVE'; state.movePackets++;
-        move={from_udp:typeof parsed.from_udp==='boolean'?parsed.from_udp:null,idCmdPresent:Object.prototype.hasOwnProperty.call(parsed,'id_cmd')};
-        if(state.moveStacksCaptured<state.maxMoveStacks){ stack=captureStack(); if(stack.captured) state.moveStacksCaptured++; }
-      }
-      const c=correlation(at); if(c) state.correlatedSends++;
-      try {
-        const result=Reflect.apply(original,this,arguments);
-        if(packetKind==='BUTTON'||(packetKind==='MOVE'&&stack)) emit({kind:'SEND',seq:++state.seq,transport:'RTC_DATA_CHANNEL',ok:true,pagePerfMs:at,deltaMs:c?.deltaMs??null,domMark:c?.mark??null,packetKind,channel:{label,protocol:this?.protocol||null,id:Number.isFinite(this?.id)?this.id:null,readyState:this?.readyState||null,ordered:typeof this?.ordered==='boolean'?this.ordered:null},button,move,stack});
-        return result;
-      } catch(err){
-        if(packetKind==='BUTTON'||(packetKind==='MOVE'&&stack)) emit({kind:'SEND',seq:++state.seq,transport:'RTC_DATA_CHANNEL',ok:false,pagePerfMs:at,deltaMs:c?.deltaMs??null,domMark:c?.mark??null,packetKind,channel:{label},button,move,stack,error:String(err?.name||err?.message||err).slice(0,120)});
-        throw err;
-      }
-    };
-    try { Object.defineProperty(wrapped,'__bcsRc13NativeHandlerShape',{value:true}); Object.defineProperty(wrapped,'__bcsOriginal',{value:original}); } catch {}
-    try { proto.send=wrapped; return proto.send===wrapped||proto.send?.__bcsRc13NativeHandlerShape===true; } catch { return false; }
-  }
-  function parameterListNear(text,name){
-    const s=String(text||''); const re=new RegExp('(?:function\\s+)?'+name+'\\s*[:=]?\\s*(?:function\\s*)?\\(([^)]*)\\)','m');
-    const m=s.match(re); if(m) return String(m[1]||'').split(',').map(v=>v.trim()).filter(Boolean).slice(0,10);
-    const m2=s.match(new RegExp(name+'\\s*\\(([^)]*)\\)\\s*\\{','m')); return m2?String(m2[1]||'').split(',').map(v=>v.trim()).filter(Boolean).slice(0,10):[];
-  }
-  async function inspectCatchEventsSource(){
-    state.sourceInspections++;
-    const finding={source:location.origin+'/static/streaming/catch-events.js',fetched:false,bytes:null,hash:null,definitions:[],error:null};
-    try {
-      const res=await fetch('/static/streaming/catch-events.js',{credentials:'same-origin',cache:'no-store'}); if(!res.ok) throw new Error('HTTP_'+res.status);
-      const txt=await res.text(); finding.fetched=true; finding.bytes=txt.length; finding.hash=fnvText(txt);
-      for(const name of ['sendMouseButtonEvent','getMouseButtonEvent','handlePointerMouseButtonEvent','sendRttEvent','_sendBatchedMouseMove']){
-        const idx=txt.indexOf(name); if(idx<0) continue;
-        const line=txt.slice(0,idx).split('\n').length; const segment=txt.slice(Math.max(0,idx-240),Math.min(txt.length,idx+2600));
-        const params=parameterListNear(segment,name); finding.definitions.push({name,line,params,paramCount:params.length,segmentHash:fnvText(segment)});
-        if(name==='sendMouseButtonEvent') state.senderDefinitionsFound++;
-      }
-    } catch(e){ finding.error=String(e?.message||e).slice(0,120); }
-    state.sourceFindings=[finding]; emit(discoveryView());
-  }
-  function scanGlobals(){
-    const found=[]; const seen=new WeakSet(); const roots=[{path:'window',value:window}]; let inspected=0;
-    for(let ri=0;ri<roots.length&&ri<300;ri++){
-      const {path,value}=roots[ri]; if(!value||(typeof value!=='object'&&typeof value!=='function')) continue; if(seen.has(value)) continue; seen.add(value);
-      let keys=[]; try { keys=Object.getOwnPropertyNames(value).slice(0,500); } catch { continue; }
-      for(const key of keys){
-        if(++inspected>6000) break; let v; try { v=value[key]; } catch { continue; } const p=path+'.'+key;
-        if(typeof v==='function'){
-          const meta=functionMeta(v); if(TARGET_NAMES.includes(key)||TARGET_NAMES.includes(meta?.functionName||'')){ found.push({path:p,key,meta}); state.globalRefObjects.push({path:p,fn:v,owner:value,key}); if(found.length>=12) break; }
-        } else if(ri<40 && v && typeof v==='object' && !(v instanceof Node) && v!==window && v!==document){ roots.push({path:p,value:v}); }
-      }
-      if(inspected>6000||found.length>=12) break;
-    }
-    state.globalSenderRefs=found; state.globalSenderRefsFound=found.filter(x=>x.key==='sendMouseButtonEvent'||x.meta?.functionName==='sendMouseButtonEvent').length; emit(discoveryView());
-  }
-  function ensureHooks(){
-    try { state.hooks.addEventListener=observeAddEventListener()||state.hooks.addEventListener; } catch {}
-    try { state.hooks.rtcDataChannel=wrapRtc()||state.hooks.rtcDataChannel; } catch {}
-    state.installed=state.hooks.rtcDataChannel&&state.hooks.addEventListener;
-  }
-  function discoveryView(){
-    return {kind:'DISCOVERY',installed:state.installed,hooks:{...state.hooks},active:state.active,totalSends:state.totalSends,correlatedSends:state.correlatedSends,clientDataChannelSeen:state.clientDataChannelSeen,buttonPackets:state.buttonPackets,movePackets:state.movePackets,buttonStacksCaptured:state.buttonStacksCaptured,moveStacksCaptured:state.moveStacksCaptured,pointerListenerRegistrations:state.pointerListenerRegistrations,pointerHandlerCandidates:state.pointerHandlerCandidates,sourceInspections:state.sourceInspections,senderDefinitionsFound:state.senderDefinitionsFound,senderCallShapesFound:state.senderCallShapesFound,globalSenderRefsFound:state.globalSenderRefsFound,listenerCallShapesFound:state.listenerCallShapesFound,targetSenderRefsFound:state.targetSenderRefsFound,listenerCandidates:state.listenerCandidates.slice(-24),sourceFindings:state.sourceFindings.slice(-12),globalSenderRefs:state.globalSenderRefs.slice(-12),targetSenderRefs:state.targetSenderRefs.slice(-16)};
-  }
-  function stateView(active){ const v=discoveryView(); v.kind='STATE'; v.active=!!active; return v; }
-  ensureHooks();
-  document.addEventListener(CTRL,e=>{
-    const d=e?.detail||{};
-    if(d.action==='START'){
-      ensureHooks(); refreshListenerAnalysis(); state.active=true; state.seq=0; state.lastDom=null; state.totalSends=0; state.correlatedSends=0; state.clientDataChannelSeen=false; state.buttonPackets=0; state.movePackets=0; state.buttonStacksCaptured=0; state.moveStacksCaptured=0; state.sourceInspections=0; state.senderDefinitionsFound=0; state.senderCallShapesFound=0; state.globalSenderRefsFound=0; state.sourceFindings=[]; state.globalSenderRefs=[]; state.globalRefObjects=[]; state.correlationMs=Number(d.correlationMs)||state.correlationMs; emit(stateView(true)); queueMicrotask(()=>{scanGlobals(); refreshListenerAnalysis(); emit(discoveryView()); void inspectCatchEventsSource();}); return;
-    }
-    if(d.action==='MARK'&&state.active){ state.lastDom=d.mark||null; state.correlationMs=Number(d.correlationMs)||state.correlationMs; return; }
-    if(d.action==='STOP'){ state.active=false; refreshListenerAnalysis(); emit(stateView(false)); state.lastDom=null; return; }
-    if(d.action==='STATE') emit(stateView(state.active));
-  },true);
-  emit(Object.assign({kind:'READY'},discoveryView(),{kind:'READY',active:false}));
-})();
-//# sourceURL=bcs-rc13-native-handler-shape.js`;
-  try {
-    const sc=document.createElement('script'); sc.textContent=source;
-    (document.documentElement || document.head || document).appendChild(sc); sc.remove();
-  } catch (e) { pushMouseTransportEvent('PAGE_OBSERVER_INSTALL_ERROR',{error:String(e?.message||e).slice(0,180)},true); }
-}
-
-function setMouseTransportProbeEnabled(enabled, reason='UI') {
-  const M=S.mouseTransport; enabled=!!enabled; if (enabled===M.enabled) return;
-  if (enabled) {
-    resetMouseTransportTelemetry(); M.enabled=true; M.startedAtSec=round(elapsed(),3); M.stoppedAtSec=null;
-    M.inputProbeOwned=!S.inputProbe.enabled;
-    if (M.inputProbeOwned) setInputProbeEnabled(true,'RC13_NATIVE_HANDLER_CALL_SHAPE_DISCOVERY');
-    dispatchMouseTransportControl({action:'START',correlationMs:MOUSE_TRANSPORT_CORRELATION_MS});
-    if (M.autoStopTimer) clearTimeout(M.autoStopTimer);
-    M.autoStopTimer=setTimeout(()=>setMouseTransportProbeEnabled(false,'AUTO_TIMEOUT'),MOUSE_TRANSPORT_AUTO_STOP_MS);
-    pushMouseTransportEvent('MOUSE_HANDLER_CALL_SHAPE_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS},true);
-    addEvent('MOUSE_HANDLER_CALL_SHAPE_DISCOVERY_START',{reason,autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS});
-  } else {
-    dispatchMouseTransportControl({action:'STOP'});
-    pushMouseTransportEvent('MOUSE_HANDLER_CALL_SHAPE_DISCOVERY_STOP',{reason},true);
-    M.enabled=false; M.stoppedAtSec=round(elapsed(),3);
-    if (M.autoStopTimer) { clearTimeout(M.autoStopTimer); M.autoStopTimer=null; }
-    if (M.inputProbeOwned && S.inputProbe.enabled) setInputProbeEnabled(false,'RC13_NATIVE_HANDLER_CALL_SHAPE_DISCOVERY_STOP');
-    M.inputProbeOwned=false;
-    addEvent('MOUSE_HANDLER_CALL_SHAPE_DISCOVERY_STOP',{reason,eventCount:M.events.count,buttonStacksCaptured:M.counters.buttonStacksCaptured});
-  }
-  updateUI();
-}
-
-function buildMouseTransportAnalysis(events) {
-  const buttons=events.filter(e=>e.type==='NATIVE_MOUSE_BUTTON_SEND'&&e.ok!==false);
-  const moves=events.filter(e=>e.type==='NATIVE_MOUSE_MOVE_SEND'&&e.ok!==false);
-  const required=['LMB_DOWN_SINGLE','LMB_UP_SINGLE','RMB_DOWN_SINGLE','RMB_UP_SINGLE'];
-  const present=[...new Set(buttons.map(e=>e.case).filter(c=>required.includes(c)))];
-  function findFrame(name){
-    for(const e of buttons){ const f=e.stack?.frames?.find(x=>x.functionName===name||String(x.functionName||'').endsWith('.'+name)); if(f) return f; }
-    return null;
-  }
-  const nativeButtonFrame=findFrame('sendMouseButtonEvent');
-  const nativeHandlerFrame=findFrame('handlePointerMouseButtonEvent');
-  const sourceFinding=S.mouseTransport.pageObserver.sourceFindings?.find(x=>x?.fetched)||null;
-  const listenerCandidates=S.mouseTransport.pageObserver.listenerCandidates||[];
-  const directRefs=S.mouseTransport.pageObserver.globalSenderRefs||[];
-  const targetRefs=S.mouseTransport.pageObserver.targetSenderRefs||[];
-  const callShapes=[];
-  for(const l of listenerCandidates){ for(const c of (l?.meta?.senderCalls||[])) callShapes.push({listenerId:l.id,eventType:l.eventType,functionName:l.meta?.functionName||null,...c}); }
-  const guards=[];
-  for(const l of listenerCandidates){ for(const g of (l?.meta?.guards||[])) guards.push({listenerId:l.id,eventType:l.eventType,functionName:l.meta?.functionName||null,shape:g}); }
-  const senderTargetRefs=targetRefs.filter(x=>x?.key==='sendMouseButtonEvent'||x?.functionName==='sendMouseButtonEvent');
-  let classification='INCONCLUSIVE';
-  if(!S.mouseTransport.pageObserver.installed) classification='OBSERVATION_HOOKS_UNAVAILABLE';
-  else if(!buttons.length) classification='NO_NATIVE_MOUSE_BUTTON_PACKETS_CAPTURED';
-  else if(!nativeButtonFrame) classification='BUTTON_STACK_CAPTURED__SEND_MOUSE_BUTTON_FRAME_MISSING';
-  else if(callShapes.length && senderTargetRefs.length) classification='NATIVE_HANDLER_CALL_SHAPE_AND_TARGET_SENDER_REF_CAPTURED';
-  else if(callShapes.length) classification='NATIVE_HANDLER_CALL_SHAPE_CAPTURED__TARGET_REF_PENDING';
-  else if(sourceFinding?.error) classification='NATIVE_BUTTON_PIPELINE_CONFIRMED__HANDLER_SOURCE_ANALYSIS_FAILED';
-  else classification='NATIVE_BUTTON_PIPELINE_CONFIRMED__HANDLER_CALL_SHAPE_PENDING';
-  return {
-    classification,requiredCases:required,presentCases:present,completeRequiredCases:required.every(c=>present.includes(c)),
-    buttonPacketCount:buttons.length,moveSampleCount:moves.length,
-    buttonStacksCaptured:S.mouseTransport.counters.buttonStacksCaptured,moveStacksCaptured:S.mouseTransport.counters.moveStacksCaptured,
-    nativeFrames:{sendMouseButtonEvent:nativeButtonFrame,handlePointerMouseButtonEvent:nativeHandlerFrame},
-    pointerListenerCandidates:listenerCandidates,handlerSenderCallShapes:callShapes,handlerGuardShapes:guards,
-    directGlobalSenderRefs:directRefs,targetSenderRefs:targetRefs,sourceInspection:sourceFinding,
-    protocolEvidence:{type:'mouse',action:'button',buttonField:'btn',pressedField:'isPressed',leftButton:0,rightButton:2},
-    privacy:'No raw payload or raw Boosteroid source is exported. Function references remain page-memory only. Handler output is reduced to function metadata, receiver names, argument token shapes, guard token shapes and target/prototype method metadata.',
-    caveat:'RC13 is observational only. No captured function reference is invoked. LIVE correction remains deferred until receiver/arguments/guards are sufficiently verified.'
-  };
-}
-
-function mouseTransportSnapshot() {
-  const M=S.mouseTransport,events=M.events.toArray();
-  return {
-    schemaVersion:6,mode:'H014C_NATIVE_HANDLER_CALL_SHAPE_DISCOVERY',enabled:M.enabled,
-    observationalOnly:true,manualDiagnosticGate:true,clientDataChannelOnly:true,
-    rawPayloadCapture:false,rawSourceCapture:false,payloadMutation:false,newTransportSendInjection:false,
-    syntheticMouseEvents:false,syntheticPointerEvents:false,stackCapture:true,
-    listenerRegistrationObservation:true,listenerInvocationWrapping:false,functionReferencesExported:false,
-    functionSourceShapeInspection:true,targetPrototypeReferenceDiscovery:true,sameOriginSourceInspection:true,
-    stackPrivacy:'BOOSTEROID_SCRIPT_PATH_FUNCTION_LINE_COLUMN__QUERY_STRIPPED',
-    correlationWindowMs:MOUSE_TRANSPORT_CORRELATION_MS,maxEvents:MAX_MOUSE_TRANSPORT_EVENTS,
-    autoStopMs:MOUSE_TRANSPORT_AUTO_STOP_MS,retainedEvents:M.events.count,
-    overwrittenEvents:Math.max(0,M.events.total-M.events.count),startedAtSec:M.startedAtSec,stoppedAtSec:M.stoppedAtSec,
-    counters:{...M.counters},pageObserver:{...M.pageObserver},analysis:buildMouseTransportAnalysis(events),
-    testProtocol:['start SHAPE TESTE before immersive','enter immersive / pointer lock','LMB normal x2','RMB normal x2','wait 2s','stop SHAPE TESTE','export JSON'],events
-  };
-}
-
-// -----------------------------------------------------------------------------
-// DIRECT CHORDED-MOUSE COMPATIBILITY GUARD BYPASS - RC15 / H-014C
-// Full client snapshot proved Boosteroid keeps both Pointer Events and classic
-// Mouse Events on Android, then suppresses mousedown/up for 500 ms after pointer
-// mouse activity. The second physical button in a chord has no second pointerdown,
-// so the native mousedown/up is the only edge and is incorrectly filtered.
-// RC15 patches ONLY EventHandler.shouldIgnoreMouseCompatibilityEvent: if the
-// ORIGINAL native guard would suppress one of the four true chord transitions,
-// RC15 returns false and lets Boosteroid's untouched getMouseButtonEvent continue
-// into sendMouseButtonEvent(event, event.type === "mousedown"). No pointer-handler
-// reroute, no compatibility-window refresh, no transport mutation, no id_cmd work.
-// -----------------------------------------------------------------------------
-function pushChordFixEvent(type,data={},force=false){
+function syncChordFixState(detail={}) {
   const F=S.mouseChordFix;
-  if(!force && !F.enabled) return null;
-  const e={t:round(elapsed(),3),wallAt:new Date().toISOString(),type,...data};
-  F.events.push(e); F.lastEvent=e; return e;
+  if ('installed' in detail) F.installed=!!detail.installed;
+  if ('eventHandlerResolved' in detail) F.eventHandlerResolved=!!detail.eventHandlerResolved;
+  if ('guardPatched' in detail) F.guardPatched=!!detail.guardPatched;
+  if (Number.isFinite(detail.patchAttempts)) F.patchAttempts=detail.patchAttempts;
+  if (Number.isFinite(detail.patchErrors)) F.patchErrors=detail.patchErrors;
+  if (detail.error) F.lastError=String(detail.error).slice(0,180);
 }
 
-function resetChordFixTelemetry(){
-  const F=S.mouseChordFix;
-  F.events.clear(); F.lastEvent=null; F.lastPair=null;
-  F.counters={patchAttempts:0,patchErrors:0,guardCalls:0,chordCandidates:0,guardBypasses:0,wsButtonMatches:0,rtcButtonMatches:0,pairedSameIdCmd:0,pairedDifferentIdCmd:0,incompletePairs:0};
-  F.caseCounts={LMB_DOWN_WHILE_RMB:0,LMB_UP_WHILE_RMB:0,RMB_DOWN_WHILE_LMB:0,RMB_UP_WHILE_LMB:0};
-}
-
-function dispatchChordFixControl(detail){
-  try{ document.dispatchEvent(new CustomEvent(CHORD_FIX_CONTROL_EVENT,{detail})); }
-  catch(e){ pushChordFixEvent('CHORD_FIX_CONTROL_ERROR',{error:String(e?.message||e).slice(0,180)},true); }
-}
-
-function syncChordFixState(detail){
-  const F=S.mouseChordFix;
-  F.installed=detail.installed===true;
-  F.eventHandlerResolved=detail.eventHandlerResolved===true;
-  F.guardPatched=detail.guardPatched===true;
-  F.wsHook=detail.hooks?.webSocket===true;
-  F.rtcHook=detail.hooks?.rtcDataChannel===true;
-  if(detail.counters && typeof detail.counters==='object') F.counters={...F.counters,...detail.counters};
-  if(detail.caseCounts && typeof detail.caseCounts==='object') F.caseCounts={...F.caseCounts,...detail.caseCounts};
-  if(detail.kind==='PAIR') F.lastPair={seq:detail.seq??null,case:detail.case||null,button:Number.isFinite(detail.button)?detail.button:null,pressed:typeof detail.pressed==='boolean'?detail.pressed:null,ws:detail.ws||null,rtc:detail.rtc||null,sameIdCmd:detail.sameIdCmd??null,error:detail.error||null};
-  F.pageState=detail.kind||F.pageState;
-}
-
-function onChordFixObservation(e){
-  const d=e?.detail;
-  if(!d || d.schemaVersion!==2) return;
+function onChordFixObservation(e) {
+  const d=e?.detail || {};
   syncChordFixState(d);
-  if(d.kind==='BYPASS' || d.kind==='PAIR' || d.kind==='ERROR' || d.kind==='PATCHED') {
-    pushChordFixEvent('CHORD_FIX_'+d.kind,{
-      case:d.case||null,eventType:d.eventType||null,button:Number.isFinite(d.button)?d.button:null,
-      buttons:Number.isFinite(d.buttons)?d.buttons:null,pressed:typeof d.pressed==='boolean'?d.pressed:null,
-      seq:d.seq??null,ws:d.ws||null,rtc:d.rtc||null,sameIdCmd:d.sameIdCmd??null,error:d.error||null
-    },true);
-  } else if(d.kind==='READY' || d.kind==='STATE') {
-    pushChordFixEvent('CHORD_FIX_'+d.kind,{enabled:d.enabled===true,eventHandlerResolved:d.eventHandlerResolved===true,guardPatched:d.guardPatched===true,hooks:d.hooks||null},true);
-  }
-  updateUI();
+  if (d.kind==='PATCHED') addEvent('H014C_FIX_PATCHED',{guardPatched:!!d.guardPatched});
+  if (d.kind==='ERROR') addEvent('H014C_FIX_ERROR',{error:d.error||'UNKNOWN'});
+}
+
+function dispatchChordFixControl(detail) {
+  try { document.dispatchEvent(new CustomEvent(CHORD_FIX_CONTROL_EVENT,{detail})); return true; }
+  catch (e) { S.mouseChordFix.lastError=String(e?.message||e).slice(0,180); return false; }
 }
 
 function installMouseChordFixPage(){
   document.addEventListener(CHORD_FIX_OBS_EVENT,onChordFixObservation,true);
   const source=`(() => {
 'use strict';
-if(window.__BCS_RC15_CHORDED_MOUSE_FIX__) return;
-window.__BCS_RC15_CHORDED_MOUSE_FIX__=true;
+if(window.__BCS_H014C_MINIMAL_GUARD_FIX__) return;
+window.__BCS_H014C_MINIMAL_GUARD_FIX__=true;
 const CONTROL=${JSON.stringify(CHORD_FIX_CONTROL_EVENT)};
 const OBS=${JSON.stringify(CHORD_FIX_OBS_EVENT)};
-const CORR_MS=${CHORD_FIX_CORRELATION_MS};
-const nativeWsSend=(typeof WebSocket!=='undefined'&&WebSocket.prototype)?WebSocket.prototype.send:null;
-const nativeRtcSend=(typeof RTCDataChannel!=='undefined'&&RTCDataChannel.prototype)?RTCDataChannel.prototype.send:null;
-const state={enabled:false,installed:true,eventHandlerResolved:false,guardPatched:false,EH:null,nativeIgnore:null,seq:0,pending:[],hooks:{webSocket:!!nativeWsSend,rtcDataChannel:!!nativeRtcSend},counters:{patchAttempts:0,patchErrors:0,guardCalls:0,chordCandidates:0,guardBypasses:0,wsButtonMatches:0,rtcButtonMatches:0,pairedSameIdCmd:0,pairedDifferentIdCmd:0,incompletePairs:0},caseCounts:{LMB_DOWN_WHILE_RMB:0,LMB_UP_WHILE_RMB:0,RMB_DOWN_WHILE_LMB:0,RMB_UP_WHILE_LMB:0}};
-function emit(detail){try{document.dispatchEvent(new CustomEvent(OBS,{detail:Object.assign({schemaVersion:2},detail)}));}catch(_){}}
-function stateView(kind='STATE'){return {kind,installed:true,enabled:state.enabled,eventHandlerResolved:state.eventHandlerResolved,guardPatched:state.guardPatched,hooks:{...state.hooks},counters:{...state.counters},caseCounts:{...state.caseCounts}};}
-function classifyChord(e){const type=String(e?.type||''),b=Number(e?.button),bs=Number(e?.buttons);if(type==='mousedown'&&b===0&&bs===3)return {case:'LMB_DOWN_WHILE_RMB',pressed:true};if(type==='mouseup'&&b===0&&bs===2)return {case:'LMB_UP_WHILE_RMB',pressed:false};if(type==='mousedown'&&b===2&&bs===3)return {case:'RMB_DOWN_WHILE_LMB',pressed:true};if(type==='mouseup'&&b===2&&bs===1)return {case:'RMB_UP_WHILE_LMB',pressed:false};return null;}
-function resolveEventHandler(){try{return Function('return typeof EventHandler !== "undefined" ? EventHandler : null')();}catch(_){return null;}}
-function beginPending(info,event){const rec={seq:++state.seq,at:performance.now(),case:info.case,eventType:String(event.type||''),button:Number(event.button),buttons:Number(event.buttons),pressed:info.pressed,ws:null,rtc:null,done:false};state.pending.push(rec);if(state.pending.length>24)state.pending.splice(0,state.pending.length-24);setTimeout(()=>{if(rec.done)return;rec.done=true;state.counters.incompletePairs++;emit({kind:'PAIR',...stateView('PAIR'),seq:rec.seq,case:rec.case,eventType:rec.eventType,button:rec.button,buttons:rec.buttons,pressed:rec.pressed,ws:rec.ws,rtc:rec.rtc,sameIdCmd:null,error:'NATIVE_TRANSPORT_PAIR_INCOMPLETE'});state.pending=state.pending.filter(x=>x!==rec);},CORR_MS+50);return rec;}
-function parseButtonPayload(data){if(typeof data!=='string'||data.length<2||data.length>1024||data.charCodeAt(0)!==123)return null;try{const x=JSON.parse(data);if(x?.type!=='mouse'||x?.action!=='button')return null;return {btn:Number(x.btn),pressed:x.isPressed===true,idCmd:Number.isFinite(Number(x.id_cmd))?Number(x.id_cmd):null,fromUdp:x.from_udp===true};}catch(_){return null;}}
-function matchTransport(kind,data,label){if(!state.enabled)return;if(kind==='RTC'&&label!=='ClientDataChannel')return;const p=parseButtonPayload(data);if(!p)return;const now=performance.now();let rec=null;for(let i=state.pending.length-1;i>=0;i--){const r=state.pending[i];if(r.done||now-r.at>CORR_MS)continue;if(r.button===p.btn&&r.pressed===p.pressed){rec=r;break;}}if(!rec)return;const view={idCmd:p.idCmd,fromUdp:p.fromUdp};if(kind==='WS'&&!p.fromUdp&&!rec.ws){rec.ws=view;state.counters.wsButtonMatches++;}else if(kind==='RTC'&&p.fromUdp&&!rec.rtc){rec.rtc=view;state.counters.rtcButtonMatches++;}if(rec.ws&&rec.rtc&&!rec.done){rec.done=true;const same=rec.ws.idCmd!==null&&rec.ws.idCmd===rec.rtc.idCmd;if(same)state.counters.pairedSameIdCmd++;else state.counters.pairedDifferentIdCmd++;emit({kind:'PAIR',...stateView('PAIR'),seq:rec.seq,case:rec.case,eventType:rec.eventType,button:rec.button,buttons:rec.buttons,pressed:rec.pressed,ws:rec.ws,rtc:rec.rtc,sameIdCmd:same});state.pending=state.pending.filter(x=>x!==rec);}}
-function tryPatch(){state.counters.patchAttempts++;if(state.guardPatched)return true;const EH=resolveEventHandler();if(!EH||typeof EH.shouldIgnoreMouseCompatibilityEvent!=='function')return false;state.EH=EH;state.eventHandlerResolved=true;const nativeIgnore=EH.shouldIgnoreMouseCompatibilityEvent;if(nativeIgnore?.__bcsRc15GuardPatch===true){state.guardPatched=true;emit(stateView('PATCHED'));return true;}state.nativeIgnore=nativeIgnore;function patchedIgnore(event){state.counters.guardCalls++;let ignored=false;try{ignored=!!nativeIgnore.call(this,event);}catch(err){state.counters.patchErrors++;emit({kind:'ERROR',...stateView('ERROR'),error:'NATIVE_GUARD:'+String(err?.message||err).slice(0,120)});throw err;}if(!state.enabled||!ignored)return ignored;const info=classifyChord(event);if(!info)return ignored;state.counters.chordCandidates++;state.counters.guardBypasses++;state.caseCounts[info.case]=(state.caseCounts[info.case]||0)+1;const rec=beginPending(info,event);emit({kind:'BYPASS',...stateView('BYPASS'),seq:rec.seq,case:info.case,eventType:rec.eventType,button:rec.button,buttons:rec.buttons,pressed:rec.pressed});return false;}try{Object.defineProperty(patchedIgnore,'__bcsRc15GuardPatch',{value:true});}catch(_){}EH.shouldIgnoreMouseCompatibilityEvent=patchedIgnore;state.guardPatched=EH.shouldIgnoreMouseCompatibilityEvent===patchedIgnore;if(!state.guardPatched){state.counters.patchErrors++;emit({kind:'ERROR',...stateView('ERROR'),error:'GUARD_ASSIGN_FAILED'});return false;}emit(stateView('PATCHED'));return true;}
-let tries=0;const timer=setInterval(()=>{tries++;if(tryPatch()||tries>=600){clearInterval(timer);if(!state.guardPatched&&tries>=600)emit({kind:'ERROR',...stateView('ERROR'),error:'EVENT_HANDLER_GUARD_NOT_FOUND'});}},20);tryPatch();
-if(nativeWsSend){WebSocket.prototype.send=function(data){if(state.enabled)matchTransport('WS',data,null);return nativeWsSend.apply(this,arguments);};}
-if(nativeRtcSend){RTCDataChannel.prototype.send=function(data){if(state.enabled)matchTransport('RTC',data,String(this?.label||''));return nativeRtcSend.apply(this,arguments);};}
-document.addEventListener(CONTROL,(e)=>{const d=e?.detail||{};if(d.action==='ENABLE'){state.enabled=true;state.pending=[];tryPatch();emit(stateView('STATE'));}else if(d.action==='DISABLE'){state.enabled=false;state.pending=[];emit(stateView('STATE'));}else if(d.action==='STATE'){tryPatch();emit(stateView('STATE'));}},true);
-emit(stateView('READY'));
+const state={enabled:false,installed:true,eventHandlerResolved:false,guardPatched:false,patchAttempts:0,patchErrors:0,error:null};
+function emit(kind){try{document.dispatchEvent(new CustomEvent(OBS,{detail:{kind,...state}}));}catch(_){}}
+function chord(e){const t=String(e?.type||''),b=Number(e?.button),bs=Number(e?.buttons);return (t==='mousedown'&&b===0&&bs===3)||(t==='mouseup'&&b===0&&bs===2)||(t==='mousedown'&&b===2&&bs===3)||(t==='mouseup'&&b===2&&bs===1);}
+function resolve(){try{return Function('return typeof EventHandler !== "undefined" ? EventHandler : null')();}catch(_){return null;}}
+function patch(){
+  state.patchAttempts++;
+  if(state.guardPatched)return true;
+  const EH=resolve();
+  if(!EH||typeof EH.shouldIgnoreMouseCompatibilityEvent!=='function')return false;
+  state.eventHandlerResolved=true;
+  const nativeIgnore=EH.shouldIgnoreMouseCompatibilityEvent;
+  if(nativeIgnore?.__bcsH014cMinimal===true){state.guardPatched=true;emit('PATCHED');return true;}
+  function wrapped(event){
+    let ignored=false;
+    try{ignored=!!nativeIgnore.call(this,event);}catch(err){state.patchErrors++;state.error='NATIVE_GUARD:'+String(err?.message||err).slice(0,120);emit('ERROR');throw err;}
+    if(!state.enabled||!ignored||!chord(event))return ignored;
+    return false;
+  }
+  try{Object.defineProperty(wrapped,'__bcsH014cMinimal',{value:true});}catch(_){}
+  EH.shouldIgnoreMouseCompatibilityEvent=wrapped;
+  state.guardPatched=EH.shouldIgnoreMouseCompatibilityEvent===wrapped;
+  if(!state.guardPatched){state.patchErrors++;state.error='GUARD_ASSIGN_FAILED';emit('ERROR');return false;}
+  emit('PATCHED');
+  return true;
+}
+let tries=0;
+const timer=setInterval(()=>{tries++;if(patch()||tries>=600){clearInterval(timer);if(!state.guardPatched){state.patchErrors++;state.error='EVENT_HANDLER_GUARD_NOT_FOUND';emit('ERROR');}}},20);
+patch();
+document.addEventListener(CONTROL,e=>{const d=e?.detail||{};if(d.action==='ENABLE'){state.enabled=true;patch();emit('STATE');}else if(d.action==='DISABLE'){state.enabled=false;emit('STATE');}else if(d.action==='STATE'){patch();emit('STATE');}},true);
+emit('READY');
 })();
-//# sourceURL=bcs-rc15-chorded-mouse-guard-fix.js`;
-  try{const sc=document.createElement('script');sc.textContent=source;(document.documentElement||document.head||document).appendChild(sc);sc.remove();}
-  catch(e){pushChordFixEvent('CHORD_FIX_INSTALL_ERROR',{error:String(e?.message||e).slice(0,180)},true);}
+//# sourceURL=bcs-h014c-minimal-guard-fix.js`;
+  try{const sc=document.createElement('script');sc.textContent=source;(document.documentElement||document.head||document).appendChild(sc);sc.remove();S.mouseChordFix.installed=true;}
+  catch(e){S.mouseChordFix.patchErrors++;S.mouseChordFix.lastError=String(e?.message||e).slice(0,180);addEvent('H014C_FIX_ERROR',{error:S.mouseChordFix.lastError});}
 }
 
 function shouldAutoEnableMouseChordFix(){
@@ -1770,83 +571,60 @@ function shouldAutoEnableMouseChordFix(){
 }
 
 function setMouseChordFixEnabled(enabled,reason='UI'){
-  const F=S.mouseChordFix; enabled=!!enabled;
-  if(enabled===F.enabled) return;
-  if(enabled){resetChordFixTelemetry();F.enabled=true;F.startedAtSec=round(elapsed(),3);F.stoppedAtSec=null;dispatchChordFixControl({action:'ENABLE'});addEvent('H014C_CHORDED_MOUSE_FIX_ENABLED',{reason,method:'DIRECT_COMPATIBILITY_GUARD_BYPASS'});pushChordFixEvent('CHORD_FIX_ENABLED',{reason},true);}
-  else{dispatchChordFixControl({action:'DISABLE'});F.enabled=false;F.stoppedAtSec=round(elapsed(),3);addEvent('H014C_CHORDED_MOUSE_FIX_DISABLED',{reason,counters:{...F.counters}});pushChordFixEvent('CHORD_FIX_DISABLED',{reason},true);}
-  updateUI();
-}
-
-function chordFixClassification(){
   const F=S.mouseChordFix;
-  if(!F.installed) return 'FIX_HOOK_NOT_INSTALLED';
-  if(!F.eventHandlerResolved || !F.guardPatched) return 'WAITING_EVENT_HANDLER_GUARD';
-  if(!F.enabled) return 'READY_OFF';
-  if(F.counters.patchErrors) return 'FIX_ERROR';
-  if(!F.counters.chordCandidates) return 'ACTIVE_WAITING_CHORD';
-  if(F.counters.pairedDifferentIdCmd) return 'DUAL_TRANSPORT_ID_MISMATCH';
-  if(F.counters.pairedSameIdCmd===F.counters.guardBypasses && F.counters.guardBypasses>0) return 'NATIVE_DUAL_TRANSPORT_CONFIRMED';
-  if(F.counters.incompletePairs) return 'NATIVE_TRANSPORT_PAIR_INCOMPLETE';
-  return 'GUARD_BYPASS_AWAITING_PAIR';
+  enabled=!!enabled;
+  if(enabled===F.enabled) return;
+  F.enabled=enabled;
+  if(enabled && !Number.isFinite(F.startedAtSec)) F.startedAtSec=round(elapsed(),3);
+  dispatchChordFixControl({action:enabled?'ENABLE':'DISABLE'});
+  addEvent(enabled?'H014C_FIX_ENABLED':'H014C_FIX_DISABLED',{reason});
+  updateUI();
 }
 
 function mouseChordFixSnapshot(){
   const F=S.mouseChordFix;
-  return {schemaVersion:3,mode:'H014C_DIRECT_COMPATIBILITY_GUARD_BYPASS',enabled:F.enabled,manualGate:false,offByDefault:false,autoIntegratedOnValidatedLabB:true,
-    implementation:'Patch Boosteroid EventHandler.shouldIgnoreMouseCompatibilityEvent in page lexical scope. Preserve original result except when it would suppress one of four true chorded mousedown/up transitions; then return false and let untouched getMouseButtonEvent/sendMouseButtonEvent execute.',
-    sourceBasis:{catchEventsVersion:'3.7.19.1.1',compatibilitySuppressionMs:500,nativeMousePath:'getMouseButtonEvent(event) -> sendMouseButtonEvent(event, event.type === mousedown)',nativeTransport:'SessionHandler.sendEvents -> WebSocket(from_udp=false) + ClientDataChannel(from_udp=true) with same id_cmd'},
-    invariants:{pointerHandlerReroute:false,compatibilityWindowRefreshByFix:false,rawTransportCapture:false,payloadMutation:false,idCmdFabrication:false,additionalTransportSend:false,syntheticDomEventDispatch:false,streamControlMutation:false},
-    hooks:{eventHandlerGuardPatch:true,eventListenerWrap:false,webSocketSendPassThrough:true,rtcDataChannelSendPassThrough:true},
-    state:{installed:F.installed,eventHandlerResolved:F.eventHandlerResolved,guardPatched:F.guardPatched,wsHook:F.wsHook,rtcHook:F.rtcHook,startedAtSec:F.startedAtSec,stoppedAtSec:F.stoppedAtSec},
-    counters:{...F.counters},caseCounts:{...F.caseCounts},classification:chordFixClassification(),lastPair:F.lastPair,events:F.events.toArray()};
+  return {
+    schemaVersion:4,
+    mode:'H014C_MINIMAL_GUARD_FIX',
+    enabled:F.enabled,
+    autoIntegratedOnValidatedLabB:shouldAutoEnableMouseChordFix(),
+    installed:F.installed,
+    eventHandlerResolved:F.eventHandlerResolved,
+    guardPatched:F.guardPatched,
+    patchAttempts:F.patchAttempts,
+    patchErrors:F.patchErrors,
+    lastError:F.lastError,
+    transportObservation:false,
+    payloadMutation:false,
+    idCmdFabrication:false,
+    additionalTransportSend:false,
+    syntheticDomEventDispatch:false
+  };
 }
 
 // -----------------------------------------------------------------------------
-// IMMERSIVE GAME MODE - V2 NATIVE-FIRST (RC16)
-// BCS orchestrates fullscreen + Keyboard Lock. Mouse capture remains owned by
-// Boosteroid's native mobile input path / CursorModeManager: BCS never calls
-// requestPointerLock(). Lifecycle/Input State Guardian observes held input state
-// across blur/visibility/pagehide but does not synthesize or resend remote input.
-// RC15 H-014C transport/button fix remains untouched.
+// IMMERSIVE GAME MODE - V2 NATIVE-FIRST / PLAY-FIRST
+// Fullscreen + Keyboard Lock are orchestrated by BCS. Mouse capture remains on
+// Boosteroid's native path. No input-shadow Guardian or synthetic recovery.
 // -----------------------------------------------------------------------------
 function immersiveElementLabel(el) {
   if (!el) return null;
-  try {
-    const tag=el.tagName || el.nodeName || 'ELEMENT';
-    const id=el.id ? `#${el.id}` : '';
-    return `${tag}${id}`;
-  } catch { return 'ELEMENT'; }
+  try { return `${el.tagName || el.nodeName || 'ELEMENT'}${el.id ? `#${el.id}` : ''}`; }
+  catch { return 'ELEMENT'; }
 }
 
 function findImmersiveFullscreenTarget() {
-  // Boosteroid mobile's own fullscreen control targets document.documentElement.
   if (/Android/i.test(ENV.likelyPlatform || '') && document.documentElement) return document.documentElement;
-  const v=S.video || findMainVideo();
-  if (!v) return document.documentElement;
-  const vw=Math.max(1,window.visualViewport?.width || innerWidth || document.documentElement.clientWidth || 1);
-  const vh=Math.max(1,window.visualViewport?.height || innerHeight || document.documentElement.clientHeight || 1);
-  const viewportArea=vw*vh;
-  let node=v.parentElement;
-  let fallback=node || document.documentElement;
-  for (let depth=0; node && node !== document.body && node !== document.documentElement && depth<7; depth++, node=node.parentElement) {
-    try {
-      const r=node.getBoundingClientRect();
-      const area=Math.max(0,r.width)*Math.max(0,r.height);
-      if (area >= viewportArea*0.55 && r.width >= vw*0.65 && r.height >= vh*0.55) return node;
-      if (area > 0) fallback=node;
-    } catch {}
-  }
-  return fallback || document.documentElement;
+  return document.documentElement || S.video || document.body;
 }
 
 function waitForDomState(predicate, timeoutMs=400) {
   return new Promise(resolve => {
     const started=now();
     const check=() => {
-      let ok=false;
-      try { ok=!!predicate(); } catch {}
-      if (ok) { resolve(true); return; }
-      if (now()-started >= timeoutMs) { resolve(false); return; }
+      let ok=false; try { ok=!!predicate(); } catch {}
+      if (ok) return resolve(true);
+      if (now()-started >= timeoutMs) return resolve(false);
       setTimeout(check,16);
     };
     check();
@@ -1858,49 +636,29 @@ async function requestFullscreenCompat(target) {
   if (fullscreenElementCompat()) return true;
   const standard=target.requestFullscreen;
   const webkit=target.webkitRequestFullscreen;
-  if (typeof standard === 'function') {
-    try {
-      const out=standard.call(target,{navigationUI:'hide'});
-      if (out && typeof out.then === 'function') await out;
-    } catch (firstError) {
-      const out=standard.call(target);
-      if (out && typeof out.then === 'function') await out;
-    }
-  } else if (typeof webkit === 'function') {
-    const out=webkit.call(target);
-    if (out && typeof out.then === 'function') await out;
-  } else {
-    throw new Error('FULLSCREEN_API_UNAVAILABLE');
-  }
-  if (fullscreenElementCompat()) return true;
-  return waitForDomState(() => !!fullscreenElementCompat(),450);
+  if (typeof standard==='function') {
+    try { const out=standard.call(target,{navigationUI:'hide'}); if (out?.then) await out; }
+    catch { const out=standard.call(target); if (out?.then) await out; }
+  } else if (typeof webkit==='function') {
+    const out=webkit.call(target); if (out?.then) await out;
+  } else throw new Error('FULLSCREEN_API_UNAVAILABLE');
+  return !!fullscreenElementCompat() || waitForDomState(()=>!!fullscreenElementCompat(),450);
 }
 
 async function exitFullscreenCompat() {
-  const standard=document.exitFullscreen;
-  const webkit=document.webkitExitFullscreen;
-  if (typeof standard === 'function') {
-    const out=standard.call(document);
-    if (out && typeof out.then === 'function') await out;
-    return true;
-  }
-  if (typeof webkit === 'function') {
-    const out=webkit.call(document);
-    if (out && typeof out.then === 'function') await out;
-    return true;
-  }
-  return false;
+  const fn=document.exitFullscreen || document.webkitExitFullscreen;
+  if (typeof fn!=='function') return false;
+  const out=fn.call(document); if (out?.then) await out; return true;
 }
 
 function releasePointerLockCompat() {
-  if (typeof document.exitPointerLock !== 'function') return false;
+  if (typeof document.exitPointerLock!=='function') return false;
   try { document.exitPointerLock(); return true; } catch { return false; }
 }
 
-function setImmersiveError(error, stage='UNKNOWN') {
-  const I=S.immersive;
+function setImmersiveError(error,stage='UNKNOWN') {
   const value=String(error?.name || error?.message || error || 'UNKNOWN').slice(0,220);
-  I.lastError={stage,error:value,atSec:round(elapsed(),3)};
+  S.immersive.lastError={stage,error:value,atSec:round(elapsed(),3)};
   addEvent('IMMERSIVE_LOCK_ERROR',{stage,error:value});
   return value;
 }
@@ -1908,175 +666,69 @@ function setImmersiveError(error, stage='UNKNOWN') {
 function immersiveOverlayHost() {
   const fs=fullscreenElementCompat();
   if (fs && !(fs instanceof HTMLVideoElement)) return fs;
-  if (S.immersive.target && !(S.immersive.target instanceof HTMLVideoElement)) return S.immersive.target;
   return document.body || document.documentElement;
 }
 
 function updateImmersiveOverlay() {
-  const I=S.immersive;
-  const root=I.overlay;
+  const I=S.immersive, root=I.overlay;
   if (!root) return;
   const status=root.querySelector('[data-bcs-immersive-status]');
   const capture=root.querySelector('[data-bcs-immersive-capture]');
   const pointer=!!document.pointerLockElement;
-  const key=I.keyboardLockOwned && S.inputProbe.keyboardLock.active && S.inputProbe.keyboardLock.owner==='IMMERSIVE';
-  if (status) status.textContent=`KEY ${key?'ON':(CAP.input.keyboardLock?'OFF':'N/A')} • MOUSE ${pointer?'ON':(CAP.input.pointerLock?'ARMADO':'N/A')}`;
-  if (capture) capture.style.display=pointer ? 'none' : 'inline-flex';
+  if (status) status.textContent=`KEY ${I.keyboardLockOwned?'ON':(CAP.input.keyboardLock?'OFF':'N/A')} • MOUSE ${pointer?'ON':(CAP.input.pointerLock?'ARMADO':'N/A')}`;
+  if (capture) capture.style.display=pointer?'none':'inline-flex';
 }
 
 function mountImmersiveOverlay() {
   const I=S.immersive;
-  if (I.overlay?.isConnected) { updateImmersiveOverlay(); return; }
-  const host=immersiveOverlayHost();
-  if (!host || !host.appendChild) return;
+  if (I.overlay?.isConnected) return updateImmersiveOverlay();
+  const host=immersiveOverlayHost(); if (!host?.appendChild) return;
   const root=document.createElement('div');
   root.id='bcs-immersive-overlay';
   root.innerHTML=`<span data-bcs-immersive-status>KEY -- • MOUSE --</span><span data-bcs-immersive-capture>MOUSE: CLIQUE NO JOGO</span><button type="button" data-bcs-immersive-exit>SAIR</button>`;
-  root.querySelector('[data-bcs-immersive-exit]')?.addEventListener('click', e => {
-    e.preventDefault();
-    e.stopPropagation();
-    void exitImmersiveMode('OVERLAY_EXIT');
-  });
-  host.appendChild(root);
-  I.overlay=root;
-  updateImmersiveOverlay();
+  root.querySelector('[data-bcs-immersive-exit]')?.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();void exitImmersiveMode('OVERLAY_EXIT');});
+  host.appendChild(root); I.overlay=root; updateImmersiveOverlay();
 }
 
-function unmountImmersiveOverlay() {
-  const I=S.immersive;
-  try { I.overlay?.remove(); } catch {}
-  I.overlay=null;
-}
+function unmountImmersiveOverlay() { try { S.immersive.overlay?.remove(); } catch {} S.immersive.overlay=null; }
 
 async function requestImmersiveKeyboardLock(reason='ENTER') {
-  const I=S.immersive;
-  const Kb=S.inputProbe.keyboardLock;
-  I.keyboardLockRequestCount++;
-  if (!Kb.supported) {
-    I.keyboardLockFailureCount++;
-    setImmersiveError('KEYBOARD_LOCK_UNSUPPORTED','KEYBOARD_LOCK');
-    updateImmersiveOverlay();
-    return false;
-  }
-  if (!fullscreenElementCompat()) {
-    I.keyboardLockFailureCount++;
-    setImmersiveError('FULLSCREEN_REQUIRED_FOR_KEYBOARD_LOCK','KEYBOARD_LOCK');
-    updateImmersiveOverlay();
-    return false;
-  }
+  const I=S.immersive; I.keyboardLockRequestCount++;
+  if (!CAP.input.keyboardLock) { I.keyboardLockFailureCount++; setImmersiveError('KEYBOARD_LOCK_UNSUPPORTED','KEYBOARD_LOCK'); return false; }
+  if (!fullscreenElementCompat()) { I.keyboardLockFailureCount++; setImmersiveError('FULLSCREEN_REQUIRED_FOR_KEYBOARD_LOCK','KEYBOARD_LOCK'); return false; }
   try {
-    const codes=[...IMMERSIVE_KEY_CODES];
-    await navigator.keyboard.lock(codes);
-    Kb.active=true;
-    Kb.owner='IMMERSIVE';
-    Kb.requestedCodes=codes;
-    Kb.requestCount++;
-    Kb.successCount++;
-    Kb.lastError=null;
-    Kb.lastChangeAtSec=round(elapsed(),3);
-    I.keyboardLockOwned=true;
-    I.keyboardLockSuccessCount++;
-    pushInputProbeEvent('KEYBOARD_LOCK_CHANGE',{active:true,codes,owner:'IMMERSIVE',reason},true);
-    addEvent('INPUT_KEYBOARD_LOCK_CHANGE',{active:true,codes,owner:'IMMERSIVE',reason});
-    updateImmersiveOverlay();
-    return true;
+    await navigator.keyboard.lock([...IMMERSIVE_KEY_CODES]);
+    I.keyboardLockOwned=true; I.keyboardLockSuccessCount++; I.lastError=null;
+    addEvent('IMMERSIVE_KEYBOARD_LOCK_CHANGE',{active:true,reason});
+    updateImmersiveOverlay(); return true;
   } catch (e) {
-    Kb.active=false;
-    Kb.owner=null;
-    Kb.requestedCodes=[];
-    Kb.requestCount++;
-    Kb.failureCount++;
-    Kb.lastError=String(e?.name || e?.message || e).slice(0,180);
-    Kb.lastChangeAtSec=round(elapsed(),3);
-    I.keyboardLockOwned=false;
-    I.keyboardLockFailureCount++;
-    setImmersiveError(Kb.lastError,'KEYBOARD_LOCK');
-    pushInputProbeEvent('KEYBOARD_LOCK_ERROR',{error:Kb.lastError,owner:'IMMERSIVE',reason},true);
-    addEvent('INPUT_KEYBOARD_LOCK_ERROR',{error:Kb.lastError,owner:'IMMERSIVE',reason});
-    updateImmersiveOverlay();
-    return false;
+    I.keyboardLockOwned=false; I.keyboardLockFailureCount++; setImmersiveError(e,'KEYBOARD_LOCK'); updateImmersiveOverlay(); return false;
   }
+}
+
+function releaseImmersiveKeyboardLock(reason='EXIT') {
+  const I=S.immersive;
+  if (!I.keyboardLockOwned) return;
+  try { navigator.keyboard?.unlock?.(); } catch {}
+  I.keyboardLockOwned=false;
+  addEvent('IMMERSIVE_KEYBOARD_LOCK_CHANGE',{active:false,reason});
 }
 
 function armNativeImmersivePointerLock(reason='ENTER') {
   const I=S.immersive;
-  if (document.pointerLockElement) {
-    I.nativePointerLockArmed=false;
-    updateImmersiveOverlay();
-    return true;
-  }
-  if (!CAP.input.pointerLock) {
-    setImmersiveError('POINTER_LOCK_UNSUPPORTED','POINTER_LOCK');
-    updateImmersiveOverlay();
-    return false;
-  }
-  I.nativePointerLockArmed=true;
-  I.nativePointerLockArmCount++;
+  if (document.pointerLockElement) { I.nativePointerLockArmed=false; updateImmersiveOverlay(); return true; }
+  if (!CAP.input.pointerLock) { setImmersiveError('POINTER_LOCK_UNSUPPORTED','POINTER_LOCK'); return false; }
+  I.nativePointerLockArmed=true; I.nativePointerLockArmCount++;
   addEvent('IMMERSIVE_NATIVE_POINTER_ARMED',{reason,strategy:'BOOSTEROID_CURSOR_MODE_MANAGER',directRequest:false});
-  updateImmersiveOverlay();
-  return false;
+  updateImmersiveOverlay(); return false;
 }
 
 async function reacquireImmersiveLocks(reason='USER_RETRY') {
-  const I=S.immersive;
-  if (!I.active) return false;
+  const I=S.immersive; if (!I.active) return false;
   I.lastError=null;
-  let keyOk=S.inputProbe.keyboardLock.active && S.inputProbe.keyboardLock.owner==='IMMERSIVE';
-  if (!keyOk) keyOk=await requestImmersiveKeyboardLock(reason);
-  const pointerOk=!!document.pointerLockElement;
-  if (!pointerOk) armNativeImmersivePointerLock(reason);
-  updateUI();
-  updateImmersiveOverlay();
-  return keyOk || pointerOk;
-}
-
-function immersiveShadowHeldKeys() {
-  const I=S.immersive;
-  return Object.keys(I.shadowKeys || {}).filter(code => I.shadowKeys[code]).slice(0,32);
-}
-
-function updateImmersiveShadowFromMouse(event) {
-  const I=S.immersive;
-  if (!I.active || !event) return;
-  if (Number.isFinite(event.buttons)) I.shadowButtons=event.buttons|0;
-}
-
-function updateImmersiveShadowFromKey(event, down) {
-  const I=S.immersive;
-  if (!I.active || !event?.code) return;
-  if (down) I.shadowKeys[event.code]=true;
-  else delete I.shadowKeys[event.code];
-}
-
-function noteImmersiveSuspension(reason='UNKNOWN') {
-  const I=S.immersive;
-  if (!I.active || I.guardianState==='SUSPENDED') return;
-  const heldKeys=immersiveShadowHeldKeys();
-  const heldButtons=I.shadowButtons|0;
-  const atSec=round(elapsed(),3);
-  I.guardianState='SUSPENDED';
-  I.suspendCount++;
-  I.lastSuspension={reason,atSec,heldButtons,heldKeys};
-  addEvent('IMMERSIVE_SUSPEND',I.lastSuspension);
-  if (heldButtons || heldKeys.length) {
-    I.possibleStuckInputCount++;
-    I.lastPossibleStuckInput={reason,atSec,heldButtons,heldKeys};
-    addEvent('IMMERSIVE_POSSIBLE_STUCK_INPUT',I.lastPossibleStuckInput);
-  }
-  // Local shadow state is invalid after focus/visibility loss. Do not send releases.
-  I.shadowButtons=0;
-  I.shadowKeys=Object.create(null);
-}
-
-function noteImmersiveResume(reason='UNKNOWN') {
-  const I=S.immersive;
-  if (!I.active || I.guardianState!=='SUSPENDED') return;
-  I.guardianState='ACTIVE';
-  I.resumeCount++;
-  I.lastResume={reason,atSec:round(elapsed(),3)};
-  addEvent('IMMERSIVE_RESUME',I.lastResume);
-  if (!document.pointerLockElement) armNativeImmersivePointerLock(`RESUME_${reason}`);
-  updateImmersiveOverlay();
+  let keyOk=I.keyboardLockOwned; if (!keyOk) keyOk=await requestImmersiveKeyboardLock(reason);
+  const pointerOk=!!document.pointerLockElement; if (!pointerOk) armNativeImmersivePointerLock(reason);
+  updateUI(); updateImmersiveOverlay(); return keyOk || pointerOk;
 }
 
 function immersiveExitChordMatches(e) {
@@ -2084,256 +736,104 @@ function immersiveExitChordMatches(e) {
 }
 
 function bindImmersiveLifecycleEvents() {
-  const I=S.immersive;
-  if (I.bound) return;
-  const onFullscreen=() => {
+  const I=S.immersive; if (I.bound) return;
+  const onFullscreen=()=>{
     const active=!!fullscreenElementCompat();
     addEvent('IMMERSIVE_FULLSCREEN_CHANGE',{active,owned:I.fullscreenOwned,phase:I.phase});
-    if (!active && (I.active || I.entering || I.exiting)) {
-      if (document.hidden || !document.hasFocus?.()) noteImmersiveSuspension('FULLSCREEN_LOST_WITH_FOCUS_LOSS');
-      void exitImmersiveMode('FULLSCREEN_LOST',{skipFullscreenExit:true,restorePanel:true});
-    } else {
-      updateImmersiveOverlay();
-      updateUI();
-    }
+    if (!active && (I.active||I.entering||I.exiting)) void exitImmersiveMode('FULLSCREEN_LOST',{skipFullscreenExit:true,restorePanel:true});
+    else { updateImmersiveOverlay(); updateUI(); }
   };
-  const onPointerLock=() => {
+  const onPointerLock=()=>{
     const active=!!document.pointerLockElement;
     if (active && I.active && !I.pointerLockPreexistingAtEnter && !I.pointerLockOwned) {
-      I.pointerLockOwned=true;
-      I.nativePointerLockArmed=false;
-      I.nativePointerLockAcquisitionCount++;
-      I.pointerLockSuccessCount++;
+      I.pointerLockOwned=true; I.nativePointerLockArmed=false; I.nativePointerLockAcquisitionCount++; I.pointerLockSuccessCount++;
       addEvent('IMMERSIVE_NATIVE_POINTER_ACQUIRED',{element:immersiveElementLabel(document.pointerLockElement),strategy:'BOOSTEROID_CURSOR_MODE_MANAGER'});
     } else if (!active) {
       I.pointerLockOwned=false;
-      if (I.active && I.phase==='ACTIVE' && !document.hidden && (typeof document.hasFocus!=='function' || document.hasFocus())) armNativeImmersivePointerLock('POINTER_LOCK_LOST');
+      if (I.active && I.phase==='ACTIVE' && !document.hidden && (typeof document.hasFocus!=='function'||document.hasFocus())) armNativeImmersivePointerLock('POINTER_LOCK_LOST');
     }
     addEvent('IMMERSIVE_POINTER_LOCK_CHANGE',{active,owned:I.pointerLockOwned,phase:I.phase,nativeFirst:true});
-    updateImmersiveOverlay();
-    updateUI();
+    updateImmersiveOverlay(); updateUI();
   };
-  const onKeyDown=e => {
-    updateImmersiveShadowFromKey(e,true);
-    if (!I.active || !immersiveExitChordMatches(e)) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    void exitImmersiveMode('EMERGENCY_EXIT_CHORD');
-  };
-  const onKeyUp=e => updateImmersiveShadowFromKey(e,false);
-  const onMouseDown=e => updateImmersiveShadowFromMouse(e);
-  const onMouseUp=e => updateImmersiveShadowFromMouse(e);
-  const onVisibility=() => {
-    if (!I.active) return;
-    if (document.hidden) noteImmersiveSuspension('VISIBILITY_HIDDEN');
-    else noteImmersiveResume('VISIBILITY_VISIBLE');
-  };
-  const onBlur=() => noteImmersiveSuspension('WINDOW_BLUR');
-  const onFocus=() => noteImmersiveResume('WINDOW_FOCUS');
-  const onPageHide=() => {
-    noteImmersiveSuspension('PAGEHIDE');
-    try {
-      if (I.keyboardLockOwned) navigator.keyboard?.unlock?.();
-      if (I.pointerLockOwned) document.exitPointerLock?.();
-    } catch {}
-  };
-  I.handlers={onFullscreen,onPointerLock,onKeyDown,onKeyUp,onMouseDown,onMouseUp,onVisibility,onBlur,onFocus,onPageHide};
+  const onKeyDown=e=>{ if (!I.active || !immersiveExitChordMatches(e)) return; e.preventDefault(); e.stopImmediatePropagation(); void exitImmersiveMode('EMERGENCY_EXIT_CHORD'); };
+  const onVisibility=()=>{ if (I.active && !document.hidden && !document.pointerLockElement) armNativeImmersivePointerLock('VISIBILITY_RESUME'); };
+  const onFocus=()=>{ if (I.active && !document.pointerLockElement) armNativeImmersivePointerLock('FOCUS_RESUME'); };
+  const onPageHide=()=>{ try { releaseImmersiveKeyboardLock('PAGEHIDE'); if (I.pointerLockOwned) document.exitPointerLock?.(); } catch {} };
+  I.handlers={onFullscreen,onPointerLock,onKeyDown,onVisibility,onFocus,onPageHide};
   document.addEventListener('fullscreenchange',onFullscreen,true);
   document.addEventListener('webkitfullscreenchange',onFullscreen,true);
   document.addEventListener('pointerlockchange',onPointerLock,true);
   document.addEventListener('visibilitychange',onVisibility,true);
-  document.addEventListener('mousedown',onMouseDown,true);
-  document.addEventListener('mouseup',onMouseUp,true);
   window.addEventListener('keydown',onKeyDown,true);
-  window.addEventListener('keyup',onKeyUp,true);
-  window.addEventListener('blur',onBlur,true);
   window.addEventListener('focus',onFocus,true);
   window.addEventListener('pagehide',onPageHide,true);
   I.bound=true;
 }
 
 function unbindImmersiveLifecycleEvents() {
-  const I=S.immersive;
-  if (!I.bound || !I.handlers) return;
+  const I=S.immersive; if (!I.bound || !I.handlers) return;
   const h=I.handlers;
   document.removeEventListener('fullscreenchange',h.onFullscreen,true);
   document.removeEventListener('webkitfullscreenchange',h.onFullscreen,true);
   document.removeEventListener('pointerlockchange',h.onPointerLock,true);
   document.removeEventListener('visibilitychange',h.onVisibility,true);
-  document.removeEventListener('mousedown',h.onMouseDown,true);
-  document.removeEventListener('mouseup',h.onMouseUp,true);
   window.removeEventListener('keydown',h.onKeyDown,true);
-  window.removeEventListener('keyup',h.onKeyUp,true);
-  window.removeEventListener('blur',h.onBlur,true);
   window.removeEventListener('focus',h.onFocus,true);
   window.removeEventListener('pagehide',h.onPageHide,true);
-  I.handlers=null;
-  I.bound=false;
+  I.handlers=null; I.bound=false;
 }
 
-function finalizeImmersiveExit(reason='EXIT', restorePanel=true) {
-  const I=S.immersive;
-  const wasActive=I.active || I.entering || I.exiting;
-  const shouldRestore=restorePanel && I.panelWasOpen;
-  I.active=false;
-  I.entering=false;
-  I.exiting=false;
-  I.phase='OFF';
-  I.guardianState='OFF';
-  I.fullscreenOwned=false;
-  I.pointerLockOwned=false;
-  I.pointerLockPreexistingAtEnter=false;
-  I.nativePointerLockArmed=false;
-  I.keyboardLockOwned=false;
-  I.shadowButtons=0;
-  I.shadowKeys=Object.create(null);
-  I.target=null;
-  I.targetLabel=null;
-  I.exitedAtSec=round(elapsed(),3);
-  I.lastReason=reason;
-  if (wasActive) I.exitCount++;
-  document.documentElement?.classList?.remove('bcs-immersive-active');
-  unmountImmersiveOverlay();
-  unbindImmersiveLifecycleEvents();
+function finalizeImmersiveExit(reason='EXIT',restorePanel=true) {
+  const I=S.immersive, wasActive=I.active||I.entering||I.exiting, shouldRestore=restorePanel&&I.panelWasOpen;
+  I.active=false; I.entering=false; I.exiting=false; I.phase='OFF'; I.fullscreenOwned=false; I.pointerLockOwned=false;
+  I.pointerLockPreexistingAtEnter=false; I.nativePointerLockArmed=false; I.keyboardLockOwned=false; I.target=null; I.targetLabel=null;
+  I.exitedAtSec=round(elapsed(),3); I.lastReason=reason; if (wasActive) I.exitCount++;
+  document.documentElement?.classList?.remove('bcs-immersive-active'); unmountImmersiveOverlay(); unbindImmersiveLifecycleEvents();
   addEvent('IMMERSIVE_EXIT',{reason,atSec:I.exitedAtSec});
-  if (shouldRestore && S.ui.built) setPanel(true);
-  else updateUI();
+  if (shouldRestore && S.ui.built) setPanel(true); else updateUI();
 }
 
 async function enterImmersiveMode(reason='USER_UI') {
-  const I=S.immersive;
-  if (I.active || I.entering) return true;
-  if (!IS_STREAM_DOCUMENT) {
-    setImmersiveError('STREAM_DOCUMENT_REQUIRED','ENTER');
-    updateUI();
-    return false;
-  }
-  const video=S.video || findMainVideo();
-  if (!video) {
-    setImmersiveError('STREAM_VIDEO_NOT_FOUND','ENTER');
-    updateUI();
-    return false;
-  }
-  I.entering=true;
-  I.exiting=false;
-  I.phase='ENTERING';
-  I.guardianState='ENTERING';
-  I.lastError=null;
-  I.lastReason=reason;
-  I.panelWasOpen=!!S.ui.open;
-  I.enterCount++;
-  I.enteredAtSec=null;
-  I.shadowButtons=0;
-  I.shadowKeys=Object.create(null);
-  I.pointerLockPreexistingAtEnter=!!document.pointerLockElement;
-  I.pointerLockOwned=false;
-  I.nativePointerLockArmed=false;
-  bindImmersiveLifecycleEvents();
-  setPanel(false);
-  const preexistingFullscreen=fullscreenElementCompat();
-  I.fullscreenOwned=false;
+  const I=S.immersive; if (I.active||I.entering) return true;
+  if (!IS_STREAM_DOCUMENT) { setImmersiveError('STREAM_DOCUMENT_REQUIRED','ENTER'); updateUI(); return false; }
+  if (!(S.video||findMainVideo())) { setImmersiveError('STREAM_VIDEO_NOT_FOUND','ENTER'); updateUI(); return false; }
+  I.entering=true; I.exiting=false; I.phase='ENTERING'; I.lastError=null; I.lastReason=reason; I.panelWasOpen=!!S.ui.open; I.enterCount++;
+  I.pointerLockPreexistingAtEnter=!!document.pointerLockElement; I.pointerLockOwned=false; I.nativePointerLockArmed=false;
+  bindImmersiveLifecycleEvents(); setPanel(false);
+  const preexistingFullscreen=fullscreenElementCompat(); I.fullscreenOwned=false;
   try {
-    if (preexistingFullscreen) {
-      I.target=preexistingFullscreen;
-      I.targetLabel=immersiveElementLabel(preexistingFullscreen);
-    } else {
-      I.target=findImmersiveFullscreenTarget();
-      I.targetLabel=immersiveElementLabel(I.target);
-      const ok=await requestFullscreenCompat(I.target);
-      if (!ok || !fullscreenElementCompat()) throw new Error('FULLSCREEN_NOT_ACQUIRED');
-      I.fullscreenOwned=true;
-    }
+    if (preexistingFullscreen) { I.target=preexistingFullscreen; I.targetLabel=immersiveElementLabel(preexistingFullscreen); }
+    else { I.target=findImmersiveFullscreenTarget(); I.targetLabel=immersiveElementLabel(I.target); const ok=await requestFullscreenCompat(I.target); if (!ok||!fullscreenElementCompat()) throw new Error('FULLSCREEN_NOT_ACQUIRED'); I.fullscreenOwned=true; }
   } catch (e) {
-    setImmersiveError(e,'FULLSCREEN');
-    I.entering=false;
-    I.phase='ERROR';
-    I.guardianState='ERROR';
-    document.documentElement?.classList?.remove('bcs-immersive-active');
-    unbindImmersiveLifecycleEvents();
-    if (I.panelWasOpen && S.ui.built) setPanel(true);
-    updateUI();
-    return false;
+    setImmersiveError(e,'FULLSCREEN'); I.entering=false; I.phase='ERROR'; unbindImmersiveLifecycleEvents(); if (I.panelWasOpen&&S.ui.built) setPanel(true); updateUI(); return false;
   }
-  I.active=true;
-  I.entering=false;
-  I.phase='ACTIVE';
-  I.guardianState='ACTIVE';
-  I.enteredAtSec=round(elapsed(),3);
-  document.documentElement?.classList?.add('bcs-immersive-active');
-  mountImmersiveOverlay();
+  I.active=true; I.entering=false; I.phase='ACTIVE'; I.enteredAtSec=round(elapsed(),3);
+  document.documentElement?.classList?.add('bcs-immersive-active'); mountImmersiveOverlay();
   const keyboardOk=await requestImmersiveKeyboardLock('ENTER');
-  const pointerAlready=!!document.pointerLockElement;
-  if (!pointerAlready) armNativeImmersivePointerLock('ENTER');
-  addEvent('IMMERSIVE_ENTER',{
-    reason,atSec:I.enteredAtSec,target:I.targetLabel,fullscreenOwned:I.fullscreenOwned,
-    keyboardLock:keyboardOk,pointerLock:pointerAlready,pointerLockStrategy:'BOOSTEROID_CURSOR_MODE_MANAGER',
-    directPointerLockRequest:false,exitChord:IMMERSIVE_EXIT_CHORD_LABEL
-  });
-  updateImmersiveOverlay();
-  updateUI();
-  return true;
+  const pointerAlready=!!document.pointerLockElement; if (!pointerAlready) armNativeImmersivePointerLock('ENTER');
+  addEvent('IMMERSIVE_ENTER',{reason,atSec:I.enteredAtSec,target:I.targetLabel,fullscreenOwned:I.fullscreenOwned,keyboardLock:keyboardOk,pointerLock:pointerAlready,pointerLockStrategy:'BOOSTEROID_CURSOR_MODE_MANAGER',directPointerLockRequest:false,exitChord:IMMERSIVE_EXIT_CHORD_LABEL});
+  updateImmersiveOverlay(); updateUI(); return true;
 }
 
-async function exitImmersiveMode(reason='USER_UI', options={}) {
-  const I=S.immersive;
-  if ((!I.active && !I.entering && !I.exiting) || I.exiting) return true;
-  I.exiting=true;
-  I.phase='EXITING';
-  I.lastReason=reason;
-  const fullscreenOwned=I.fullscreenOwned;
-  const pointerOwned=I.pointerLockOwned;
-  const keyboardOwned=I.keyboardLockOwned;
-  if (keyboardOwned) {
-    await releaseKeyboardLock(`IMMERSIVE_${reason}`,'IMMERSIVE');
-    I.keyboardLockOwned=false;
-  }
-  // Only release a pointer lock acquired during this Immersive session.
-  if (pointerOwned && !I.pointerLockPreexistingAtEnter && document.pointerLockElement) {
-    releasePointerLockCompat();
-    I.pointerLockOwned=false;
-  }
-  if (fullscreenOwned && !options.skipFullscreenExit && fullscreenElementCompat()) {
-    try { await exitFullscreenCompat(); }
-    catch (e) { setImmersiveError(e,'FULLSCREEN_EXIT'); }
-  }
-  finalizeImmersiveExit(reason, options.restorePanel !== false);
-  return true;
+async function exitImmersiveMode(reason='USER_UI',options={}) {
+  const I=S.immersive; if ((!I.active&&!I.entering&&!I.exiting)||I.exiting) return true;
+  I.exiting=true; I.phase='EXITING'; I.lastReason=reason;
+  releaseImmersiveKeyboardLock(`IMMERSIVE_${reason}`);
+  if (I.pointerLockOwned && !I.pointerLockPreexistingAtEnter && document.pointerLockElement) releasePointerLockCompat();
+  if (I.fullscreenOwned && !options.skipFullscreenExit && fullscreenElementCompat()) { try { await exitFullscreenCompat(); } catch (e) { setImmersiveError(e,'FULLSCREEN_EXIT'); } }
+  finalizeImmersiveExit(reason,options.restorePanel!==false); return true;
 }
 
 function immersiveSnapshot() {
   const I=S.immersive;
   return {
-    schemaVersion:2,
-    mode:'IMMERSIVE_GAME_MODE_V2_NATIVE_FIRST',
-    phase:I.phase,
-    active:I.active,
-    userTriggered:true,
-    nativeFirst:true,
-    fullscreen:{supported:CAP.display.fullscreen,active:!!fullscreenElementCompat(),ownedByBCS:I.fullscreenOwned,target:I.targetLabel,navigationUIHideRequested:true,androidNativeTarget:/Android/i.test(ENV.likelyPlatform||'')?'document.documentElement':'platform-adaptive'},
-    keyboardLock:{supported:CAP.input.keyboardLock,active:S.inputProbe.keyboardLock.active && S.inputProbe.keyboardLock.owner==='IMMERSIVE',ownedByBCS:I.keyboardLockOwned,codes:[...IMMERSIVE_KEY_CODES],requestCount:I.keyboardLockRequestCount,successCount:I.keyboardLockSuccessCount,failureCount:I.keyboardLockFailureCount},
-    pointerLock:{
-      supported:CAP.input.pointerLock,active:!!document.pointerLockElement,ownedByBCSMechanism:false,
-      sessionAcquired:I.pointerLockOwned,preexistingAtEnter:I.pointerLockPreexistingAtEnter,
-      strategy:'BOOSTEROID_CURSOR_MODE_MANAGER',directRequestCount:I.directPointerLockRequestCount,
-      nativeArmCount:I.nativePointerLockArmCount,nativeAcquisitionCount:I.nativePointerLockAcquisitionCount,
-      legacyRequestCount:I.pointerLockRequestCount,successCount:I.pointerLockSuccessCount,failureCount:I.pointerLockFailureCount
-    },
-    guardian:{
-      state:I.guardianState,shadowButtons:I.shadowButtons|0,heldKeyCodes:immersiveShadowHeldKeys(),
-      suspendCount:I.suspendCount,resumeCount:I.resumeCount,possibleStuckInputCount:I.possibleStuckInputCount,
-      lastSuspension:I.lastSuspension,lastResume:I.lastResume,lastPossibleStuckInput:I.lastPossibleStuckInput,
-      sendsRecoveryInput:false,periodicStateResend:false
-    },
-    exit:{emergencyChord:IMMERSIVE_EXIT_CHORD_LABEL,localInterceptionOnlyForEmergencyChord:true,cleanUnlockOnExit:true,preservesPreexistingFullscreenAndPointerLockOwnership:true},
-    enterCount:I.enterCount,
-    exitCount:I.exitCount,
-    enteredAtSec:I.enteredAtSec,
-    exitedAtSec:I.exitedAtSec,
-    lastReason:I.lastReason,
-    lastError:I.lastError,
-    syntheticRemoteInput:false,
-    mouseTransportOverride:false,
-    streamControlMutation:false
+    schemaVersion:3,mode:'IMMERSIVE_GAME_MODE_V2_NATIVE_FIRST_PLAY_FIRST',phase:I.phase,active:I.active,nativeFirst:true,
+    fullscreen:{supported:CAP.display.fullscreen,active:!!fullscreenElementCompat(),ownedByBCS:I.fullscreenOwned,target:I.targetLabel},
+    keyboardLock:{supported:CAP.input.keyboardLock,active:I.keyboardLockOwned,requestCount:I.keyboardLockRequestCount,successCount:I.keyboardLockSuccessCount,failureCount:I.keyboardLockFailureCount},
+    pointerLock:{supported:CAP.input.pointerLock,active:!!document.pointerLockElement,sessionAcquired:I.pointerLockOwned,preexistingAtEnter:I.pointerLockPreexistingAtEnter,strategy:'BOOSTEROID_CURSOR_MODE_MANAGER',directRequestCount:0,nativeArmCount:I.nativePointerLockArmCount,nativeAcquisitionCount:I.nativePointerLockAcquisitionCount},
+    exit:{emergencyChord:IMMERSIVE_EXIT_CHORD_LABEL,cleanUnlockOnExit:true},
+    enterCount:I.enterCount,exitCount:I.exitCount,enteredAtSec:I.enteredAtSec,exitedAtSec:I.exitedAtSec,lastReason:I.lastReason,lastError:I.lastError,
+    syntheticRemoteInput:false,mouseTransportOverride:false,streamControlMutation:false,inputShadowGuardian:false
   };
 }
 
@@ -2354,16 +854,6 @@ function installPageBridge() {
     if (v == null) return v;
     if (['string','number','boolean'].includes(typeof v)) return v;
     return String(v);
-  };
-
-  const codecsFromSdp = sdp => {
-    if (!sdp || typeof sdp !== 'string') return [];
-    const part = sdp.replace(/\r/g,'').split('m=video')[1]?.split('\nm=')[0] || '';
-    const out=[];
-    const re=/a=rtpmap:(\d+)\s+([A-Za-z0-9\-]+)\/(\d+)/g;
-    let m;
-    while ((m=re.exec(part)) !== null) out.push({payload:m[1],codec:m[2],clockRate:Number(m[3])});
-    return out;
   };
 
   const findPC = () => {
@@ -2436,43 +926,8 @@ function installPageBridge() {
         source:peer.source,
         connectionState:primitive(pc.connectionState),
         iceConnectionState:primitive(pc.iceConnectionState),
-        signalingState:primitive(pc.signalingState),
-        localVideoCodecs:codecsFromSdp(pc.localDescription?.sdp || ''),
-        remoteVideoCodecs:codecsFromSdp(pc.remoteDescription?.sdp || '')
+        signalingState:primitive(pc.signalingState)
       };
-      try {
-        const receivers=pc.getReceivers?.() || [];
-        const senders=pc.getSenders?.() || [];
-        const transceivers=pc.getTransceivers?.() || [];
-        out.peerConnection.resources={
-          receivers:receivers.length,
-          videoReceivers:receivers.filter(r=>r?.track?.kind==='video').length,
-          senders:senders.length,
-          videoSenders:senders.filter(s=>s?.track?.kind==='video').length,
-          transceivers:transceivers.length
-        };
-      } catch {}
-      try {
-        const receiver=(pc.getReceivers?.() || []).find(r => r?.track?.kind === 'video') || null;
-        if (receiver) {
-          out.receiverHints={
-            jitterBufferTarget:primitive(receiver.jitterBufferTarget),
-            playoutDelayHint:primitive(receiver.playoutDelayHint)
-          };
-          try {
-            const settings=receiver.track?.getSettings?.() || null;
-            if (settings) {
-              out.receiverTrackSettings={
-                width:primitive(settings.width),
-                height:primitive(settings.height),
-                frameRate:primitive(settings.frameRate),
-                aspectRatio:primitive(settings.aspectRatio),
-                resizeMode:primitive(settings.resizeMode)
-              };
-            }
-          } catch {}
-        }
-      } catch {}
     }
     return out;
   };
@@ -2536,38 +991,13 @@ function installPageBridge() {
         bytesReceived:n(inbound.bytesReceived),
         packetsReceived:n(inbound.packetsReceived),
         packetsLost:n(inbound.packetsLost),
-        packetsDiscarded:n(inbound.packetsDiscarded),
         jitter:n(inbound.jitter),
-        jitterBufferDelay:n(inbound.jitterBufferDelay),
-        jitterBufferTargetDelay:n(inbound.jitterBufferTargetDelay),
-        jitterBufferMinimumDelay:n(inbound.jitterBufferMinimumDelay),
-        jitterBufferEmittedCount:n(inbound.jitterBufferEmittedCount),
         framesReceived:n(inbound.framesReceived),
         framesDecoded:n(inbound.framesDecoded),
         framesDropped:n(inbound.framesDropped),
-        framesRendered:n(inbound.framesRendered),
-        keyFramesDecoded:n(inbound.keyFramesDecoded),
         totalDecodeTime:n(inbound.totalDecodeTime),
-        totalProcessingDelay:n(inbound.totalProcessingDelay),
-        totalInterFrameDelay:n(inbound.totalInterFrameDelay),
-        totalSquaredInterFrameDelay:n(inbound.totalSquaredInterFrameDelay),
-        qpSum:n(inbound.qpSum),
-        totalCorruptionProbability:n(inbound.totalCorruptionProbability),
-        totalSquaredCorruptionProbability:n(inbound.totalSquaredCorruptionProbability),
-        corruptionMeasurements:n(inbound.corruptionMeasurements),
-        nackCount:n(inbound.nackCount),
-        pliCount:n(inbound.pliCount),
-        firCount:n(inbound.firCount),
-        retransmittedPacketsReceived:n(inbound.retransmittedPacketsReceived),
-        retransmittedBytesReceived:n(inbound.retransmittedBytesReceived),
-        framesAssembledFromMultiplePackets:n(inbound.framesAssembledFromMultiplePackets),
-        totalAssemblyTime:n(inbound.totalAssemblyTime),
-        pauseCount:n(inbound.pauseCount),
-        totalPausesDuration:n(inbound.totalPausesDuration),
         freezeCount:n(inbound.freezeCount),
-        totalFreezesDuration:n(inbound.totalFreezesDuration),
-        decoderImplementation:primitive(inbound.decoderImplementation),
-        powerEfficientDecoder:primitive(inbound.powerEfficientDecoder)
+        totalFreezesDuration:n(inbound.totalFreezesDuration)
       },
       candidatePair:selectedPair ? {
         currentRoundTripTime:n(selectedPair.currentRoundTripTime),
@@ -2912,188 +1342,36 @@ function bridgeAsk(action, payload = null, timeoutMs = 850) {
 }
 
 // -----------------------------------------------------------------------------
-// VIDEO + COMPOSITOR HOT PATH
-// requestVideoFrameCallback is treated as a compositor callback source, not as
-// a direct per-decoded-frame clock. Per-frame work is numeric only.
+// VIDEO LIFECYCLE - PLAY-FIRST
+// No surface/image lab observer and no per-frame analyzer in the default product.
 // -----------------------------------------------------------------------------
-function resObj(width, height) {
-  width = Math.round(Number(width) || 0);
-  height = Math.round(Number(height) || 0);
-  return width > 0 && height > 0 ? { width, height } : null;
+function resObj(width,height) {
+  width=Math.round(Number(width)||0); height=Math.round(Number(height)||0);
+  return width>0&&height>0 ? {width,height} : null;
 }
 
-function resKey(r) {
-  return r?.width > 0 && r?.height > 0 ? `${r.width}x${r.height}` : '';
-}
-
-function sameRes(a, b) {
-  return !!a === !!b && (!a || (a.width === b.width && a.height === b.height));
-}
+function sameRes(a,b) { return !!a===!!b && (!a || (a.width===b.width && a.height===b.height)); }
 
 function findMainVideo() {
-  const preferred = document.getElementById('remotevideo');
+  const preferred=document.getElementById('remotevideo');
   if (preferred instanceof HTMLVideoElement) return preferred;
-  const videos = document.querySelectorAll('video');
-  if (videos.length === 1) return videos[0];
-  let best = null, bestArea = -1;
-  for (const v of videos) {
-    const area = (v.clientWidth || 0) * (v.clientHeight || 0);
-    if (area > bestArea) { best = v; bestArea = area; }
-  }
+  const videos=document.querySelectorAll('video');
+  if (videos.length===1) return videos[0];
+  let best=null,bestArea=-1;
+  for (const v of videos) { const area=(v.clientWidth||0)*(v.clientHeight||0); if (area>bestArea) {best=v;bestArea=area;} }
   return best;
 }
 
 function snapshotVideo() {
-  const v = S.video;
-  if (!v) return;
-  const w = v.videoWidth || 0, h = v.videoHeight || 0;
-  S.videoState.resolution = resObj(w, h);
-  if (S.surface.rendered) S.videoState.rendered = S.surface.rendered;
-  S.videoState.readyState = v.readyState;
-  S.videoState.paused = v.paused;
-  S.videoState.currentTime = Number.isFinite(v.currentTime) ? round(v.currentTime, 3) : null;
+  const v=S.video; if (!v) return;
+  S.videoState.resolution=resObj(v.videoWidth||0,v.videoHeight||0);
+  S.videoState.readyState=v.readyState;
+  S.videoState.paused=v.paused;
+  S.videoState.currentTime=Number.isFinite(v.currentTime)?round(v.currentTime,3):null;
 }
 
-function surfaceSnapshot(reason = 'CHECK', emit = true) {
-  const v = S.video;
-  const rect = v?.getBoundingClientRect?.();
-  const rendered = rect ? resObj(rect.width || v.clientWidth, rect.height || v.clientHeight) : null;
-  const viewport = {
-    width: Math.round(innerWidth || 0),
-    height: Math.round(innerHeight || 0),
-    visualWidth: round(window.visualViewport?.width, 2),
-    visualHeight: round(window.visualViewport?.height, 2),
-    scale: round(window.visualViewport?.scale, 4)
-  };
-  const orientation = screen.orientation?.type || `${Math.max(innerWidth, innerHeight) >= Math.min(innerWidth, innerHeight) ? (innerWidth >= innerHeight ? 'landscape' : 'portrait') : 'unknown'}`;
-  let objectFit=null, objectPosition=null;
-  try {
-    const style=v ? getComputedStyle(v) : null;
-    objectFit=style?.objectFit || null;
-    objectPosition=style?.objectPosition || null;
-  } catch {}
-  const renderedKey = resKey(rendered);
-  const viewportKey = `${viewport.width}x${viewport.height}|${viewport.visualWidth}x${viewport.visualHeight}|${viewport.scale}`;
-  const styleKey = `${objectFit || ''}|${objectPosition || ''}`;
-
-  if (emit && renderedKey && S.surface.renderedKey && renderedKey !== S.surface.renderedKey) {
-    addEvent('SURFACE_CHANGE', {
-      reason,
-      from: S.surface.rendered,
-      to: rendered,
-      streamResolution: S.videoState.resolution
-    });
-  }
-  if (emit && S.surface.viewportKey && viewportKey !== S.surface.viewportKey) {
-    addEvent('VIEWPORT_CHANGE', { reason, viewport });
-  }
-  if (emit && S.surface.orientation && orientation !== S.surface.orientation) {
-    addEvent('ORIENTATION_CHANGE', { reason, from: S.surface.orientation, to: orientation });
-  }
-  if (emit && S.surface.styleKey && styleKey !== S.surface.styleKey) {
-    addEvent('SURFACE_STYLE_CHANGE', {
-      reason,
-      from:{objectFit:S.surface.objectFit,objectPosition:S.surface.objectPosition},
-      to:{objectFit,objectPosition}
-    });
-  }
-
-  S.surface.renderedKey = renderedKey || S.surface.renderedKey;
-  if (rendered) S.surface.rendered = rendered;
-  S.surface.viewportKey = viewportKey;
-  S.surface.viewport = viewport;
-  S.surface.orientation = orientation;
-  S.surface.styleKey = styleKey;
-  S.surface.objectFit = objectFit;
-  S.surface.objectPosition = objectPosition;
-  if (rendered) S.videoState.rendered = rendered;
-
-  return { rendered, viewport, orientation, objectFit, objectPosition };
-}
-
-function scheduleSurfaceCheck(reason) {
-  // Coalesce resize animation bursts (especially Safari VisualViewport) into
-  // one final state without adding polling.
-  S.surface.pending = true;
-  S.surface.pendingReason = reason;
-  if (S.surface.pendingTimer) clearTimeout(S.surface.pendingTimer);
-  S.surface.pendingTimer = setTimeout(() => {
-    S.surface.pending = false;
-    S.surface.pendingTimer = null;
-    const finalReason = S.surface.pendingReason || reason;
-    S.surface.pendingReason = null;
-    surfaceSnapshot(finalReason, true);
-  }, 90);
-}
-
-function readPlaybackQuality() {
-  const v=S.video;
-  if (!v || !CAP.video.getVideoPlaybackQuality || typeof v.getVideoPlaybackQuality !== 'function') return null;
-  try {
-    const q=v.getVideoPlaybackQuality();
-    if (!q) return null;
-    return {
-      creationTime:Number.isFinite(q.creationTime) ? q.creationTime : null,
-      totalVideoFrames:Number.isFinite(q.totalVideoFrames) ? q.totalVideoFrames : null,
-      droppedVideoFrames:Number.isFinite(q.droppedVideoFrames) ? q.droppedVideoFrames : null
-    };
-  } catch {
-    return null;
-  }
-}
-
-function processPlaybackQuality(raw) {
-  if (!raw) return {
-    available:false,
-    totalVideoFramesRaw:null,droppedVideoFramesRaw:null,
-    totalVideoFramesDelta:null,droppedVideoFramesDelta:null,dropPercent:null
-  };
-  const out={
-    available:true,
-    totalVideoFramesRaw:raw.totalVideoFrames,
-    droppedVideoFramesRaw:raw.droppedVideoFrames,
-    totalVideoFramesDelta:null,
-    droppedVideoFramesDelta:null,
-    dropPercent:null
-  };
-  const prev=S.playbackPrev;
-  if (prev) {
-    const totalDelta=Number.isFinite(raw.totalVideoFrames) && Number.isFinite(prev.totalVideoFrames)
-      ? raw.totalVideoFrames-prev.totalVideoFrames : null;
-    const droppedDelta=Number.isFinite(raw.droppedVideoFrames) && Number.isFinite(prev.droppedVideoFrames)
-      ? raw.droppedVideoFrames-prev.droppedVideoFrames : null;
-    out.totalVideoFramesDelta=Number.isFinite(totalDelta) && totalDelta>=0 ? totalDelta : null;
-    out.droppedVideoFramesDelta=Number.isFinite(droppedDelta) && droppedDelta>=0 ? droppedDelta : null;
-    if ((out.totalVideoFramesDelta || 0)>0 && Number.isFinite(out.droppedVideoFramesDelta)) {
-      out.dropPercent=out.droppedVideoFramesDelta/out.totalVideoFramesDelta*100;
-    }
-  }
-  S.playbackPrev=raw;
-  return out;
-}
-
-function resetCompositorWindowAnchors() {
-  const f=S.frame;
-  f.lastNow=0;
-  f.prevSamplePresentedFrames=Number.isFinite(f.lastPresentedFrames) ? f.lastPresentedFrames : null;
-  f.prevSampleCallbacks=f.callbacks;
-  f.prevSampleTime=now();
-  f.intervalCount=0;
-  f.intervalSum=0;
-  f.intervalSumSq=0;
-  f.intervalMin=Infinity;
-  f.intervalMax=0;
-  f.processingCount=0;
-  f.processingSumMs=0;
-  f.latenessCount=0;
-  f.latenessSumMs=0;
-  f.multiFrameCallbacks=0;
-}
-
-function reanchorMeasurement(reason, graceSamples=0) {
-  resetCompositorWindowAnchors();
+function reanchorMeasurement(reason,graceSamples=0) {
   S.rtcPrev=null;
-  S.playbackPrev=null;
   S.measurement.resumeGraceSamples=Math.max(S.measurement.resumeGraceSamples,graceSamples);
   S.measurement.lastReanchorReason=reason;
   S.measurement.lastReanchorAtSec=round(elapsed(),3);
@@ -3101,785 +1379,114 @@ function reanchorMeasurement(reason, graceSamples=0) {
 }
 
 function measurementEligibility() {
-  if (document.hidden || S.measurement.hidden) return {eligible:false,reason:'DOCUMENT_HIDDEN'};
+  if (document.hidden||S.measurement.hidden) return {eligible:false,reason:'DOCUMENT_HIDDEN'};
   if (!S.video) return {eligible:false,reason:'NO_VIDEO'};
-  if (S.video.paused || S.measurement.videoPaused) return {eligible:false,reason:'VIDEO_PAUSED'};
-  if ((S.video.readyState || 0) < 2) return {eligible:false,reason:'VIDEO_NOT_READY'};
-  if (S.measurement.resumeGraceSamples > 0) return {eligible:false,reason:'RESUME_GRACE'};
+  if (S.video.paused||S.measurement.videoPaused) return {eligible:false,reason:'VIDEO_PAUSED'};
+  if ((S.video.readyState||0)<2) return {eligible:false,reason:'VIDEO_NOT_READY'};
+  if (S.measurement.resumeGraceSamples>0) return {eligible:false,reason:'RESUME_GRACE'};
   return {eligible:true,reason:null};
 }
 
 function bindGlobalSurfaceEvents() {
   if (S.surface.globalBound) return;
-  S.surface.globalBound = true;
-  surfaceSnapshot('GLOBAL_BIND', false);
-  window.addEventListener('resize', () => scheduleSurfaceCheck('WINDOW_RESIZE'), { passive: true });
-  window.addEventListener('orientationchange', () => scheduleSurfaceCheck('ORIENTATION_EVENT'), { passive: true });
-  document.addEventListener('visibilitychange', () => {
+  S.surface.globalBound=true;
+  document.addEventListener('visibilitychange',()=>{
     S.measurement.hidden=!!document.hidden;
-    if (document.hidden) reanchorMeasurement('DOCUMENT_HIDDEN',0);
-    else reanchorMeasurement('DOCUMENT_VISIBLE',2);
+    reanchorMeasurement(document.hidden?'DOCUMENT_HIDDEN':'DOCUMENT_VISIBLE',document.hidden?0:2);
     addEvent('VISIBILITY_CHANGE',{hidden:!!document.hidden});
-  }, { passive:true });
-  try {
-    window.visualViewport?.addEventListener('resize', () => scheduleSurfaceCheck('VISUAL_VIEWPORT_RESIZE'), { passive: true });
-  } catch {}
-}
-
-function bindSurfaceObserver(v) {
-  try { S.surface.resizeObserver?.disconnect(); } catch {}
-  if (typeof ResizeObserver === 'function') {
-    try {
-      S.surface.resizeObserver = new ResizeObserver(() => scheduleSurfaceCheck('RESIZE_OBSERVER'));
-      S.surface.resizeObserver.observe(v);
-      S.longSession.surfaceObserverBindCount++;
-    } catch {}
-  }
-  surfaceSnapshot('VIDEO_BIND', false);
-}
-
-function recordCallbackInterval(dt) {
-  const f = S.frame;
-  f.intervalCount++;
-  f.intervalSum += dt;
-  f.intervalSumSq += dt * dt;
-  if (dt < f.intervalMin) f.intervalMin = dt;
-  if (dt > f.intervalMax) f.intervalMax = dt;
-
-  f.histCount++;
-  f.histSum += dt;
-  f.histSumSq += dt * dt;
-  if (dt < f.histMin) f.histMin = dt;
-  if (dt > f.histMax) f.histMax = dt;
-  const bin = clamp(Math.floor(dt / FRAME_BIN_MS), 0, FRAME_HIST_BINS - 1);
-  f.histogram[bin]++;
-}
-
-function recordDeepCallbackWork(ms) {
-  if (!Number.isFinite(ms) || ms < 0) return;
-  const d=S.deep;
-  d.callbackWorkCount++;
-  d.callbackWorkTotalMs+=ms;
-  if (ms>d.callbackWorkMaxMs) d.callbackWorkMaxMs=ms;
-  const bin=clamp(Math.floor(ms/DEEP_WORK_BIN_MS),0,DEEP_WORK_BINS-1);
-  d.callbackWorkHistogram[bin]++;
-}
-
-function deepHistogramPercentile(q) {
-  const d=S.deep;
-  if (!d.callbackWorkCount) return null;
-  const target=Math.ceil(d.callbackWorkCount*q);
-  let acc=0;
-  for (let i=0;i<d.callbackWorkHistogram.length;i++) {
-    acc+=d.callbackWorkHistogram[i];
-    if (acc>=target) {
-      if (i===d.callbackWorkHistogram.length-1) return DEEP_WORK_MAX_MS;
-      return i*DEEP_WORK_BIN_MS+DEEP_WORK_BIN_MS/2;
-    }
-  }
-  return null;
-}
-
-function deepEnabledDurationMs() {
-  const d=S.deep;
-  const current=d.enabled && Number.isFinite(d.enabledAtSec)
-    ? Math.max(0, elapsed()*1000-d.enabledAtSec*1000)
-    : 0;
-  return d.totalEnabledMs+current;
-}
-
-function deepPerformanceSnapshot() {
-  const d=S.deep;
-  return {
-    enabled:d.enabled,
-    enableCount:d.enableCount,
-    disableCount:d.disableCount,
-    enabledAtSec:d.enabledAtSec,
-    lastDisabledAtSec:d.lastDisabledAtSec,
-    totalEnabledMs:round(deepEnabledDurationMs(),3),
-    callbacksProcessed:d.callbacksProcessed,
-    callbacksDiscarded:d.callbacksDiscarded,
-    callbackWork:{
-      count:d.callbackWorkCount,
-      totalMs:round(d.callbackWorkTotalMs,3),
-      avgMs:d.callbackWorkCount ? round(d.callbackWorkTotalMs/d.callbackWorkCount,4) : null,
-      maxMs:round(d.callbackWorkMaxMs,4),
-      p50Ms:round(deepHistogramPercentile(0.50),4),
-      p95Ms:round(deepHistogramPercentile(0.95),4),
-      p99Ms:round(deepHistogramPercentile(0.99),4),
-      histogramBinMs:DEEP_WORK_BIN_MS,
-      histogramOverflowAtMs:DEEP_WORK_MAX_MS
-    }
-  };
-}
-
-function resetDeepPerformanceStats() {
-  const d=S.deep;
-  d.totalEnabledMs=0;
-  d.callbacksProcessed=0;
-  d.callbacksDiscarded=0;
-  d.callbackWorkCount=0;
-  d.callbackWorkTotalMs=0;
-  d.callbackWorkMaxMs=0;
-  d.callbackWorkHistogram.fill(0);
-  d.prevSampleCallbacksProcessed=0;
-  d.prevSampleWorkTotalMs=0;
-  d.enableCount=0;
-  d.disableCount=0;
-  d.enabledAtSec=d.enabled ? round(elapsed(),3) : null;
-  d.lastDisabledAtSec=null;
-}
-
-function scheduleDeepFrameLoop(v=S.video) {
-  if (!S.deep.enabled || !v || S.video!==v || typeof v.requestVideoFrameCallback!=='function') return false;
-  if (S.deep.callbackScheduled) return true;
-  const token=S.deep.token;
-  S.deep.callbackScheduled=true;
-
-  const cb=(t,meta)=>{
-    S.deep.callbackScheduled=false;
-    if (!S.deep.enabled || S.video!==v || token!==S.deep.token) {
-      S.deep.callbacksDiscarded++;
-      return;
-    }
-
-    const workStart=now();
-    const f=S.frame;
-    f.callbacks++;
-
-    if (f.lastNow>0) {
-      const dt=t-f.lastNow;
-      if (dt>0 && dt<1000) recordCallbackInterval(dt);
-    }
-    f.lastNow=t;
-    S.lastFrameAt=round(elapsed(),3);
-    if (S.firstFrameAt==null) S.firstFrameAt=S.lastFrameAt;
-
-    if (Number.isFinite(meta.presentedFrames)) {
-      if (Number.isFinite(f.lastCallbackPresentedFrames)) {
-        const dpf=meta.presentedFrames-f.lastCallbackPresentedFrames;
-        if (dpf>1) f.multiFrameCallbacks++;
-      }
-      f.lastCallbackPresentedFrames=meta.presentedFrames;
-      f.lastPresentedFrames=meta.presentedFrames;
-    }
-
-    if (Number.isFinite(meta.processingDuration)) {
-      f.processingCount++;
-      f.processingSumMs+=meta.processingDuration*1000;
-    }
-    if (Number.isFinite(meta.expectedDisplayTime)) {
-      const late=Math.max(0,t-meta.expectedDisplayTime);
-      f.latenessCount++;
-      f.latenessSumMs+=late;
-    }
-
-    const w=meta.width||v.videoWidth||0;
-    const h=meta.height||v.videoHeight||0;
-    const nextRes=resObj(w,h);
-    if (nextRes) S.videoState.rvfcMediaFrame=nextRes;
-    if (nextRes && !sameRes(nextRes,S.videoState.resolution)) {
-      const prev=S.videoState.resolution;
-      S.videoState.resolution=nextRes;
-      addEvent('VIDEO_RESOLUTION_CHANGE',{from:prev,to:nextRes,source:'DEEP_RVFC'});
-    }
-
-    S.deep.callbacksProcessed++;
-    recordDeepCallbackWork(now()-workStart);
-
-    if (S.deep.enabled && S.video===v && token===S.deep.token) {
-      S.deep.callbackScheduled=true;
-      v.requestVideoFrameCallback(cb);
-    }
-  };
-
-  v.requestVideoFrameCallback(cb);
-  return true;
-}
-
-function setDeepAnalyzerEnabled(enabled, reason='USER') {
-  enabled=!!enabled;
-  const d=S.deep;
-  if (enabled===d.enabled) return false;
-  if (enabled && !CAP.video.requestVideoFrameCallback) {
-    addEvent('DEEP_ANALYZER_UNAVAILABLE',{reason:'REQUEST_VIDEO_FRAME_CALLBACK_UNSUPPORTED'});
-    updateUI();
-    return false;
-  }
-
-  if (enabled) {
-    d.enabled=true;
-    d.token++;
-    d.enableCount++;
-    d.enabledAtSec=round(elapsed(),3);
-    resetCompositorWindowAnchors();
-    addEvent('DEEP_ANALYZER_ENABLED',{reason,atSec:d.enabledAtSec,capability:CAP.video.requestVideoFrameCallback});
-    scheduleDeepFrameLoop(S.video);
-  } else {
-    const at=round(elapsed(),3);
-    if (Number.isFinite(d.enabledAtSec)) d.totalEnabledMs+=Math.max(0,(at-d.enabledAtSec)*1000);
-    d.enabled=false;
-    d.token++;
-    d.callbackScheduled=false;
-    d.disableCount++;
-    d.lastDisabledAtSec=at;
-    d.enabledAtSec=null;
-    resetCompositorWindowAnchors();
-    addEvent('DEEP_ANALYZER_DISABLED',{reason,atSec:at,performance:deepPerformanceSnapshot()});
-  }
-  updateUI();
-  return true;
+  },{passive:true});
 }
 
 function bindVideo(v) {
-  if (!v || (S.video === v && S.videoBound)) return;
-  S.longSession.videoBindCount++;
-  S.video = v;
-  S.videoBound = true;
-  S.videoState.rvfcMediaFrame=null;
-  S.playbackPrev=null;
-  S.measurement.videoPaused=!!v.paused;
-  if (S.firstVideoAt == null) S.firstVideoAt = round(elapsed(), 3);
-  addEvent('VIDEO_FOUND', { id: v.id || null });
-
-  const on = (name, fn = null) => v.addEventListener(name, () => {
-    if (fn) fn();
-    snapshotVideo();
-    addEvent('VIDEO_EVENT', { event: name, readyState: v.readyState });
-  }, { passive: true });
-
-  on('loadedmetadata', () => { if (S.firstMetadataAt == null) S.firstMetadataAt = round(elapsed(), 3); });
-  on('playing', () => {
-    if (S.firstPlayingAt == null) S.firstPlayingAt = round(elapsed(), 3);
-    S.measurement.videoPaused=false;
-    reanchorMeasurement('VIDEO_PLAYING',2);
-    if (S.deep.enabled) scheduleDeepFrameLoop(v);
-  });
-  on('pause', () => {
-    S.measurement.videoPaused=true;
-    reanchorMeasurement('VIDEO_PAUSE',0);
-  });
-  on('waiting');
-  on('stalled');
-  on('emptied');
-  on('resize', () => scheduleSurfaceCheck('VIDEO_RESIZE'));
-
+  if (!v || (S.video===v && S.videoBound)) return;
+  S.video=v; S.videoBound=true; S.measurement.videoPaused=!!v.paused;
+  if (S.firstVideoAt==null) S.firstVideoAt=round(elapsed(),3);
+  addEvent('VIDEO_FOUND',{id:v.id||null});
+  const on=(name,fn=null)=>v.addEventListener(name,()=>{ if(fn)fn(); snapshotVideo(); addEvent('VIDEO_EVENT',{event:name,readyState:v.readyState}); },{passive:true});
+  on('loadedmetadata',()=>{if(S.firstMetadataAt==null)S.firstMetadataAt=round(elapsed(),3);});
+  on('playing',()=>{if(S.firstPlayingAt==null)S.firstPlayingAt=round(elapsed(),3);S.measurement.videoPaused=false;reanchorMeasurement('VIDEO_PLAYING',2);});
+  on('pause',()=>{S.measurement.videoPaused=true;reanchorMeasurement('VIDEO_PAUSE',0);});
+  on('waiting'); on('stalled'); on('emptied'); on('resize');
   snapshotVideo();
-  bindSurfaceObserver(v);
-  if (S.deep.enabled) scheduleDeepFrameLoop(v);
 }
 
 function videoScanner() {
-  const v = findMainVideo();
-  if (v && v !== S.video) bindVideo(v);
+  const v=findMainVideo();
+  if (v && v!==S.video) bindVideo(v);
   if (!S.video || !document.contains(S.video)) {
-    if (S.video && !document.contains(S.video)) {
-      S.longSession.videoRemovedCount++;
-      addEvent('VIDEO_REMOVED');
-      try { S.surface.resizeObserver?.disconnect(); } catch {}
-      S.video = null;
-      S.videoBound = false;
-    }
-    setTimeout(videoScanner, 1500);
-  } else {
-    setTimeout(videoScanner, 4000);
-  }
-}
-
-function normalizeCompositorRegime(hz) {
-  if (!Number.isFinite(hz) || hz < 5) return null;
-  const common = [15, 20, 24, 25, 30, 40, 48, 50, 60, 72, 75, 90, 100, 120, 144, 165, 240];
-  let best = common[0], dist = Infinity;
-  for (const c of common) {
-    const d = Math.abs(hz - c);
-    if (d < dist) { dist = d; best = c; }
-  }
-  return dist <= Math.max(2, best * 0.08) ? best : Math.round(hz);
-}
-
-function updateCompositorRegime(callbackHz) {
-  const f = S.frame;
-  const candidate = normalizeCompositorRegime(callbackHz);
-  if (!candidate) return f.regime;
-  if (candidate === f.regime) {
-    f.regimeCandidate = null;
-    f.regimeCandidateCount = 0;
-    return f.regime;
-  }
-  if (candidate === f.regimeCandidate) f.regimeCandidateCount++;
-  else {
-    f.regimeCandidate = candidate;
-    f.regimeCandidateCount = 1;
-  }
-  if (f.regimeCandidateCount >= COMPOSITOR_REGIME_CONFIRM_SAMPLES) {
-    const from = f.regime;
-    f.regime = candidate;
-    f.regimeCandidate = null;
-    f.regimeCandidateCount = 0;
-    addEvent('COMPOSITOR_REGIME_CHANGE', { fromHz: from, toHz: candidate });
-  }
-  return f.regime || candidate;
-}
-
-function consumeCompositorSample(sampleNow) {
-  const f = S.frame;
-  const d = S.deep;
-  if (!d.enabled) {
-    return {
-      deepEnabled:false,presentedFPS:null,presentedFramesDelta:null,callbackHz:null,callbackCountDelta:null,
-      callbackIntervalMeanMs:null,callbackJitterMs:null,callbackIntervalMinMs:null,callbackIntervalMaxMs:null,
-      framesPerCallback:null,multiFrameCallbacks:null,processingDurationMs:null,callbackLatenessMs:null,compositorRegimeHz:null,
-      deepCallbackWorkCountDelta:0,deepCallbackWorkTotalMs:0,deepCallbackWorkAvgMs:null
-    };
-  }
-  let presentedFPS = null;
-  let presentedFramesDelta = null;
-  let callbackHz = null;
-  let callbackCountDelta = null;
-  let framesPerCallback = null;
-
-  if (Number.isFinite(f.prevSampleTime)) {
-    const dt = (sampleNow - f.prevSampleTime) / 1000;
-    callbackCountDelta = Math.max(0, f.callbacks - f.prevSampleCallbacks);
-    if (dt > 0) callbackHz = callbackCountDelta / dt;
-    if (Number.isFinite(f.lastPresentedFrames) && Number.isFinite(f.prevSamplePresentedFrames)) {
-      presentedFramesDelta = f.lastPresentedFrames - f.prevSamplePresentedFrames;
-      if (dt > 0 && presentedFramesDelta >= 0) presentedFPS = presentedFramesDelta / dt;
-    }
-    if (callbackCountDelta > 0 && Number.isFinite(presentedFramesDelta) && presentedFramesDelta >= 0) {
-      framesPerCallback = presentedFramesDelta / callbackCountDelta;
-    }
-  }
-
-  f.prevSamplePresentedFrames = Number.isFinite(f.lastPresentedFrames) ? f.lastPresentedFrames : f.prevSamplePresentedFrames;
-  f.prevSampleCallbacks = f.callbacks;
-  f.prevSampleTime = sampleNow;
-
-  const count = f.intervalCount;
-  let callbackIntervalMeanMs = null, callbackJitterMs = null, callbackIntervalMinMs = null, callbackIntervalMaxMs = null;
-  if (count > 0) {
-    callbackIntervalMeanMs = f.intervalSum / count;
-    const variance = Math.max(0, f.intervalSumSq / count - callbackIntervalMeanMs * callbackIntervalMeanMs);
-    callbackJitterMs = Math.sqrt(variance);
-    callbackIntervalMinMs = f.intervalMin;
-    callbackIntervalMaxMs = f.intervalMax;
-  }
-
-  const processingDurationMs = f.processingCount > 0 ? f.processingSumMs / f.processingCount : null;
-  const callbackLatenessMs = f.latenessCount > 0 ? f.latenessSumMs / f.latenessCount : null;
-  const multiFrameCallbacks = f.multiFrameCallbacks;
-  const deepCallbackWorkCountDelta=Math.max(0,d.callbacksProcessed-d.prevSampleCallbacksProcessed);
-  const deepCallbackWorkTotalMs=Math.max(0,d.callbackWorkTotalMs-d.prevSampleWorkTotalMs);
-  const deepCallbackWorkAvgMs=deepCallbackWorkCountDelta>0 ? deepCallbackWorkTotalMs/deepCallbackWorkCountDelta : null;
-  d.prevSampleCallbacksProcessed=d.callbacksProcessed;
-  d.prevSampleWorkTotalMs=d.callbackWorkTotalMs;
-
-  f.intervalCount = 0;
-  f.intervalSum = 0;
-  f.intervalSumSq = 0;
-  f.intervalMin = Infinity;
-  f.intervalMax = 0;
-  f.processingCount = 0;
-  f.processingSumMs = 0;
-  f.latenessCount = 0;
-  f.latenessSumMs = 0;
-  f.multiFrameCallbacks = 0;
-
-  return {
-    presentedFPS: round(presentedFPS, 3),
-    presentedFramesDelta,
-    callbackHz: round(callbackHz, 3),
-    callbackCountDelta,
-    callbackIntervalMeanMs: round(callbackIntervalMeanMs, 3),
-    callbackJitterMs: round(callbackJitterMs, 3),
-    callbackIntervalMinMs: round(callbackIntervalMinMs, 3),
-    callbackIntervalMaxMs: round(callbackIntervalMaxMs, 3),
-    framesPerCallback: round(framesPerCallback, 4),
-    multiFrameCallbacks,
-    processingDurationMs: round(processingDurationMs, 3),
-    callbackLatenessMs: round(callbackLatenessMs, 3),
-    compositorRegimeHz: updateCompositorRegime(callbackHz),
-    deepEnabled:true,
-    deepCallbackWorkCountDelta,
-    deepCallbackWorkTotalMs:round(deepCallbackWorkTotalMs,4),
-    deepCallbackWorkAvgMs:round(deepCallbackWorkAvgMs,4)
-  };
-}
-
-function callbackHistogramPercentile(q) {
-  const f = S.frame;
-  if (!f.histCount) return null;
-  const target = Math.ceil(f.histCount * q);
-  let acc = 0;
-  for (let i = 0; i < f.histogram.length; i++) {
-    acc += f.histogram[i];
-    if (acc >= target) {
-      if (i === f.histogram.length - 1) return FRAME_HIST_MAX_MS;
-      return i * FRAME_BIN_MS + FRAME_BIN_MS / 2;
-    }
-  }
-  return null;
-}
-
-function compositorSessionStats() {
-  const f = S.frame;
-  if (!f.histCount) return { count: 0, avgMs: null, minMs: null, maxMs: null, p50Ms: null, p95Ms: null, p99Ms: null, stddevMs: null };
-  const avg = f.histSum / f.histCount;
-  const variance = Math.max(0, f.histSumSq / f.histCount - avg * avg);
-  return {
-    count: f.histCount,
-    avgMs: round(avg, 4),
-    minMs: round(f.histMin, 4),
-    maxMs: round(f.histMax, 4),
-    p50Ms: round(callbackHistogramPercentile(0.50), 4),
-    p95Ms: round(callbackHistogramPercentile(0.95), 4),
-    p99Ms: round(callbackHistogramPercentile(0.99), 4),
-    stddevMs: round(Math.sqrt(variance), 4),
-    histogramBinMs: FRAME_BIN_MS,
-    histogramOverflowAtMs: FRAME_HIST_MAX_MS,
-    semantics: 'requestVideoFrameCallback callback intervals; not decoded-frame intervals'
-  };
+    if (S.video && !document.contains(S.video)) { addEvent('VIDEO_REMOVED'); S.video=null; S.videoBound=false; }
+    setTimeout(videoScanner,1500);
+  } else setTimeout(videoScanner,4000);
 }
 
 // -----------------------------------------------------------------------------
 // RTC PROCESSING
 // -----------------------------------------------------------------------------
-function processRtc(raw, localNow) {
+function processRtc(raw,localNow) {
   if (!raw?.ok || !raw.inbound) return null;
-  const r = raw.inbound;
-  const cur = {
-    localNow,
-    timestamp: r.timestamp,
-    bytesReceived: r.bytesReceived ?? null,
-    videoBytesReceivedTotal: Number.isFinite(raw.videoAggregate?.bytesReceivedTotal) ? raw.videoAggregate.bytesReceivedTotal : null,
-    transportBytesReceived: Number.isFinite(raw.candidatePair?.bytesReceived) ? raw.candidatePair.bytesReceived : null,
-    packetsReceived: r.packetsReceived ?? 0,
-    packetsLost: r.packetsLost ?? 0,
-    packetsDiscarded: r.packetsDiscarded ?? null,
-    framesReceived: r.framesReceived ?? 0,
-    framesDecoded: r.framesDecoded ?? 0,
-    framesDropped: r.framesDropped ?? 0,
-    framesRendered: r.framesRendered ?? null,
-    totalDecodeTime: r.totalDecodeTime ?? null,
-    totalProcessingDelay: r.totalProcessingDelay ?? null,
-    totalInterFrameDelay: r.totalInterFrameDelay ?? null,
-    totalSquaredInterFrameDelay: r.totalSquaredInterFrameDelay ?? null,
-    qpSum: r.qpSum ?? null,
-    totalCorruptionProbability: r.totalCorruptionProbability ?? null,
-    totalSquaredCorruptionProbability: r.totalSquaredCorruptionProbability ?? null,
-    corruptionMeasurements: r.corruptionMeasurements ?? null,
-    nackCount: r.nackCount ?? null,
-    pliCount: r.pliCount ?? null,
-    firCount: r.firCount ?? null,
-    retransmittedPacketsReceived: r.retransmittedPacketsReceived ?? null,
-    retransmittedBytesReceived: r.retransmittedBytesReceived ?? null,
-    framesAssembledFromMultiplePackets: r.framesAssembledFromMultiplePackets ?? null,
-    totalAssemblyTime: r.totalAssemblyTime ?? null,
-    pauseCount: r.pauseCount ?? null,
-    totalPausesDuration: r.totalPausesDuration ?? null,
-    freezeCount: r.freezeCount ?? 0,
-    totalFreezesDuration: r.totalFreezesDuration ?? null,
-    jbDelay: r.jitterBufferDelay ?? null,
-    jbTargetDelay: r.jitterBufferTargetDelay ?? null,
-    jbMinDelay: r.jitterBufferMinimumDelay ?? null,
-    jbCount: r.jitterBufferEmittedCount ?? null
+  const r=raw.inbound;
+  const cur={
+    localNow,timestamp:r.timestamp,
+    bytesReceived:r.bytesReceived??null,
+    videoBytesReceivedTotal:Number.isFinite(raw.videoAggregate?.bytesReceivedTotal)?raw.videoAggregate.bytesReceivedTotal:null,
+    transportBytesReceived:Number.isFinite(raw.candidatePair?.bytesReceived)?raw.candidatePair.bytesReceived:null,
+    packetsReceived:r.packetsReceived??0,packetsLost:r.packetsLost??0,
+    framesReceived:r.framesReceived??0,framesDecoded:r.framesDecoded??0,framesDropped:r.framesDropped??0,
+    totalDecodeTime:r.totalDecodeTime??null,freezeCount:r.freezeCount??0,totalFreezesDuration:r.totalFreezesDuration??null
   };
-
-  const out = {
-    pcSource: raw.pcSource || null,
-    pcState: raw.pcState || null,
-    iceState: raw.iceState || null,
-    codec: r.mimeType || null,
-    inboundResolution: resObj(r.frameWidth, r.frameHeight),
-    rtcFPS: r.framesPerSecond ?? null,
-    bitrateMbps: null,
-    bitrateSource: null,
-    bitrateScope: null,
-    bitrateConfidence: null,
-    receivedFPS: null,
-    decodedFPS: null,
-    packetsLostRaw: cur.packetsLost,
-    packetsLostDelta: null,
-    packetsReceivedDelta: null,
-    packetLossPercent: null,
-    packetsDiscardedRaw: cur.packetsDiscarded,
-    networkJitterMs: Number.isFinite(r.jitter) ? r.jitter * 1000 : null,
-    jitterBufferMs: null,
-    jitterBufferTargetMs: null,
-    jitterBufferMinimumMs: null,
-    framesReceivedRaw: cur.framesReceived,
-    framesReceivedDelta: null,
-    framesDecodedRaw: cur.framesDecoded,
-    framesDecodedDelta: null,
-    framesDroppedRaw: cur.framesDropped,
-    framesDroppedDelta: null,
-    framesRenderedRaw: cur.framesRendered,
-    framesRenderedDelta: null,
-    renderedFPSFromStats: null,
-    decodeTimePerFrameMs: null,
-    processingDelayPerFrameMs: null,
-    renderInterFrameMeanMs: null,
-    renderInterFrameStdDevMs: null,
-    qpSumRaw: cur.qpSum,
-    qpSumDelta: null,
-    qpPerDecodedFrame: null,
-    corruptionMeasurementsRaw: cur.corruptionMeasurements,
-    corruptionMeasurementsDelta: null,
-    corruptionProbabilityMean: null,
-    corruptionProbabilityStdDev: null,
-    nackCountRaw: cur.nackCount,
-    nackCountDelta: null,
-    pliCountRaw: cur.pliCount,
-    pliCountDelta: null,
-    firCountRaw: cur.firCount,
-    firCountDelta: null,
-    retransmittedPacketsReceivedRaw: cur.retransmittedPacketsReceived,
-    retransmittedPacketsReceivedDelta: null,
-    retransmittedBytesReceivedRaw: cur.retransmittedBytesReceived,
-    retransmittedBytesReceivedDelta: null,
-    framesAssembledFromMultiplePacketsRaw: cur.framesAssembledFromMultiplePackets,
-    framesAssembledFromMultiplePacketsDelta: null,
-    assemblyTimePerMultiPacketFrameMs: null,
-    pauseCountRaw: cur.pauseCount,
-    pauseCountDelta: null,
-    totalPausesDuration: cur.totalPausesDuration,
-    freezeCount: cur.freezeCount,
-    freezeDelta: null,
-    totalFreezesDurationRaw: cur.totalFreezesDuration,
-    freezeDurationDeltaMs: null,
-    rttMs: Number.isFinite(raw.candidatePair?.currentRoundTripTime) ? raw.candidatePair.currentRoundTripTime * 1000 : null,
-    availableIncomingMbps: Number.isFinite(raw.candidatePair?.availableIncomingBitrate) ? raw.candidatePair.availableIncomingBitrate / 1e6 : null,
-    decoderImplementation: r.decoderImplementation ?? null,
-    powerEfficientDecoder: r.powerEfficientDecoder ?? null
+  const out={
+    pcSource:raw.pcSource||null,pcState:raw.pcState||null,iceState:raw.iceState||null,
+    codec:r.mimeType||null,inboundResolution:resObj(r.frameWidth,r.frameHeight),rtcFPS:r.framesPerSecond??null,
+    bitrateMbps:null,bitrateSource:null,bitrateScope:null,bitrateConfidence:null,
+    receivedFPS:null,decodedFPS:null,packetsLostRaw:cur.packetsLost,packetsLostDelta:null,packetsReceivedDelta:null,packetLossPercent:null,
+    networkJitterMs:Number.isFinite(r.jitter)?r.jitter*1000:null,
+    framesDroppedDelta:null,freezeCount:cur.freezeCount,freezeDelta:null,freezeDurationDeltaMs:null,decodeTimePerFrameMs:null,
+    rttMs:Number.isFinite(raw.candidatePair?.currentRoundTripTime)?raw.candidatePair.currentRoundTripTime*1000:null,
+    availableIncomingMbps:Number.isFinite(raw.candidatePair?.availableIncomingBitrate)?raw.candidatePair.availableIncomingBitrate/1e6:null
   };
-
-  const prev = S.rtcPrev;
+  const prev=S.rtcPrev;
   if (prev) {
-    let dt = null;
-    if (Number.isFinite(cur.timestamp) && Number.isFinite(prev.timestamp)) dt = (cur.timestamp - prev.timestamp) / 1000;
-    if (!(dt > 0 && dt < 10)) dt = (localNow - prev.localNow) / 1000;
-
-    if (dt > 0) {
-      const recvFramesDelta = cur.framesReceived - prev.framesReceived;
-      const decFramesDelta = cur.framesDecoded - prev.framesDecoded;
-      const recvPacketsDelta = cur.packetsReceived - prev.packetsReceived;
-      const lostDelta = cur.packetsLost - prev.packetsLost;
-      if (recvFramesDelta >= 0) { out.receivedFPS = recvFramesDelta / dt; out.framesReceivedDelta = recvFramesDelta; }
-      if (decFramesDelta >= 0) { out.decodedFPS = decFramesDelta / dt; out.framesDecodedDelta = decFramesDelta; }
-      out.packetsReceivedDelta = recvPacketsDelta >= 0 ? recvPacketsDelta : null;
-      out.packetsLostDelta = lostDelta >= 0 ? lostDelta : null;
-      const packetTotal = Math.max(0, recvPacketsDelta) + Math.max(0, lostDelta);
-      if (packetTotal > 0) out.packetLossPercent = Math.max(0, lostDelta) / packetTotal * 100;
-
-      const aggregateBytesDelta = Number.isFinite(cur.videoBytesReceivedTotal) && Number.isFinite(prev.videoBytesReceivedTotal)
-        ? cur.videoBytesReceivedTotal - prev.videoBytesReceivedTotal : null;
-      const selectedBytesDelta = Number.isFinite(cur.bytesReceived) && Number.isFinite(prev.bytesReceived)
-        ? cur.bytesReceived - prev.bytesReceived : null;
-      const transportBytesDelta = Number.isFinite(cur.transportBytesReceived) && Number.isFinite(prev.transportBytesReceived)
-        ? cur.transportBytesReceived - prev.transportBytesReceived : null;
-      const streamProgressed = recvFramesDelta > 0 || recvPacketsDelta > 0;
-      if (Number.isFinite(aggregateBytesDelta) && aggregateBytesDelta > 0) {
-        out.bitrateMbps = aggregateBytesDelta * 8 / dt / 1e6;
-        out.bitrateSource = 'INBOUND_VIDEO_BYTES_SUM';
-        out.bitrateScope = 'VIDEO';
-        out.bitrateConfidence = 'DIRECT_COUNTER';
-      } else if (Number.isFinite(selectedBytesDelta) && selectedBytesDelta > 0) {
-        out.bitrateMbps = selectedBytesDelta * 8 / dt / 1e6;
-        out.bitrateSource = 'SELECTED_INBOUND_VIDEO_BYTES';
-        out.bitrateScope = 'VIDEO';
-        out.bitrateConfidence = 'DIRECT_COUNTER';
-      } else if (streamProgressed && Number.isFinite(transportBytesDelta) && transportBytesDelta > 0) {
-        out.bitrateMbps = transportBytesDelta * 8 / dt / 1e6;
-        out.bitrateSource = 'CANDIDATE_PAIR_BYTES_FALLBACK';
-        out.bitrateScope = 'TRANSPORT';
-        out.bitrateConfidence = 'APPROXIMATE';
-      } else if (!streamProgressed && aggregateBytesDelta === 0) {
-        out.bitrateMbps = 0;
-        out.bitrateSource = 'INBOUND_VIDEO_BYTES_SUM';
-        out.bitrateScope = 'VIDEO';
-        out.bitrateConfidence = 'DIRECT_COUNTER';
-      } else if (streamProgressed) {
-        out.bitrateSource = 'UNAVAILABLE_STALLED_COUNTER';
-        out.bitrateScope = null;
-        out.bitrateConfidence = 'UNAVAILABLE';
-      }
-
-      const droppedDelta = cur.framesDropped - prev.framesDropped;
-      out.framesDroppedDelta = droppedDelta >= 0 ? droppedDelta : null;
-
-      const freezeDelta = cur.freezeCount - prev.freezeCount;
-      out.freezeDelta = freezeDelta >= 0 ? freezeDelta : null;
-      if (Number.isFinite(cur.totalFreezesDuration) && Number.isFinite(prev.totalFreezesDuration) && cur.totalFreezesDuration >= prev.totalFreezesDuration) {
-        out.freezeDurationDeltaMs = (cur.totalFreezesDuration - prev.totalFreezesDuration) * 1000;
-      }
-
-      const decodeDelta = Number.isFinite(cur.totalDecodeTime) && Number.isFinite(prev.totalDecodeTime)
-        ? cur.totalDecodeTime - prev.totalDecodeTime : null;
-      if (Number.isFinite(decodeDelta) && decodeDelta >= 0 && decFramesDelta > 0) {
-        out.decodeTimePerFrameMs = decodeDelta / decFramesDelta * 1000;
-      }
-
-      const renderedDelta = Number.isFinite(cur.framesRendered) && Number.isFinite(prev.framesRendered)
-        ? cur.framesRendered-prev.framesRendered : null;
-      if (Number.isFinite(renderedDelta) && renderedDelta>=0) {
-        out.framesRenderedDelta=renderedDelta;
-        if (dt>0) out.renderedFPSFromStats=renderedDelta/dt;
-      }
-
-      const processingDelta = Number.isFinite(cur.totalProcessingDelay) && Number.isFinite(prev.totalProcessingDelay)
-        ? cur.totalProcessingDelay-prev.totalProcessingDelay : null;
-      if (Number.isFinite(processingDelta) && processingDelta>=0 && decFramesDelta>0) {
-        out.processingDelayPerFrameMs=processingDelta/decFramesDelta*1000;
-      }
-
-      if (Number.isFinite(renderedDelta) && renderedDelta>0) {
-        const interDelta=Number.isFinite(cur.totalInterFrameDelay) && Number.isFinite(prev.totalInterFrameDelay)
-          ? cur.totalInterFrameDelay-prev.totalInterFrameDelay : null;
-        const interSqDelta=Number.isFinite(cur.totalSquaredInterFrameDelay) && Number.isFinite(prev.totalSquaredInterFrameDelay)
-          ? cur.totalSquaredInterFrameDelay-prev.totalSquaredInterFrameDelay : null;
-        if (Number.isFinite(interDelta) && interDelta>=0) {
-          const meanSec=interDelta/renderedDelta;
-          out.renderInterFrameMeanMs=meanSec*1000;
-          if (Number.isFinite(interSqDelta) && interSqDelta>=0) {
-            const varianceSec2=Math.max(0,interSqDelta/renderedDelta-meanSec*meanSec);
-            out.renderInterFrameStdDevMs=Math.sqrt(varianceSec2)*1000;
-          }
-        }
-      }
-
-      const qpDelta=Number.isFinite(cur.qpSum) && Number.isFinite(prev.qpSum) ? cur.qpSum-prev.qpSum : null;
-      if (Number.isFinite(qpDelta) && qpDelta>=0) {
-        out.qpSumDelta=qpDelta;
-        if (decFramesDelta>0) out.qpPerDecodedFrame=qpDelta/decFramesDelta;
-      }
-
-      const counterDelta=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)&&a>=b ? a-b : null;
-      out.corruptionMeasurementsDelta=counterDelta(cur.corruptionMeasurements,prev.corruptionMeasurements);
-      if (out.corruptionMeasurementsDelta>0 && Number.isFinite(cur.totalCorruptionProbability) && Number.isFinite(prev.totalCorruptionProbability) && cur.totalCorruptionProbability>=prev.totalCorruptionProbability) {
-        const pDelta=cur.totalCorruptionProbability-prev.totalCorruptionProbability;
-        const meanP=pDelta/out.corruptionMeasurementsDelta;
-        out.corruptionProbabilityMean=meanP;
-        if (Number.isFinite(cur.totalSquaredCorruptionProbability) && Number.isFinite(prev.totalSquaredCorruptionProbability) && cur.totalSquaredCorruptionProbability>=prev.totalSquaredCorruptionProbability) {
-          const sqDelta=cur.totalSquaredCorruptionProbability-prev.totalSquaredCorruptionProbability;
-          out.corruptionProbabilityStdDev=Math.sqrt(Math.max(0,sqDelta/out.corruptionMeasurementsDelta-meanP*meanP));
-        }
-      }
-      out.nackCountDelta=counterDelta(cur.nackCount,prev.nackCount);
-      out.pliCountDelta=counterDelta(cur.pliCount,prev.pliCount);
-      out.firCountDelta=counterDelta(cur.firCount,prev.firCount);
-      out.retransmittedPacketsReceivedDelta=counterDelta(cur.retransmittedPacketsReceived,prev.retransmittedPacketsReceived);
-      out.retransmittedBytesReceivedDelta=counterDelta(cur.retransmittedBytesReceived,prev.retransmittedBytesReceived);
-      out.pauseCountDelta=counterDelta(cur.pauseCount,prev.pauseCount);
-
-      const assembledDelta=counterDelta(cur.framesAssembledFromMultiplePackets,prev.framesAssembledFromMultiplePackets);
-      out.framesAssembledFromMultiplePacketsDelta=assembledDelta;
-      const assemblyTimeDelta=Number.isFinite(cur.totalAssemblyTime) && Number.isFinite(prev.totalAssemblyTime)
-        ? cur.totalAssemblyTime-prev.totalAssemblyTime : null;
-      if (Number.isFinite(assemblyTimeDelta) && assemblyTimeDelta>=0 && assembledDelta>0) {
-        out.assemblyTimePerMultiPacketFrameMs=assemblyTimeDelta/assembledDelta*1000;
-      }
-
-      const countDelta = Number.isFinite(cur.jbCount) && Number.isFinite(prev.jbCount)
-        ? cur.jbCount - prev.jbCount : 0;
-      if (countDelta > 0) {
-        const perFrame = (a, b) => Number.isFinite(a) && Number.isFinite(b) && a >= b
-          ? (a - b) / countDelta * 1000 : null;
-        out.jitterBufferMs = perFrame(cur.jbDelay, prev.jbDelay);
-        out.jitterBufferTargetMs = perFrame(cur.jbTargetDelay, prev.jbTargetDelay);
-        out.jitterBufferMinimumMs = perFrame(cur.jbMinDelay, prev.jbMinDelay);
-      }
+    let dt=Number.isFinite(cur.timestamp)&&Number.isFinite(prev.timestamp)?(cur.timestamp-prev.timestamp)/1000:null;
+    if (!(dt>0&&dt<10)) dt=(localNow-prev.localNow)/1000;
+    if (dt>0) {
+      const recvFrames=cur.framesReceived-prev.framesReceived, decFrames=cur.framesDecoded-prev.framesDecoded;
+      const recvPackets=cur.packetsReceived-prev.packetsReceived, lost=cur.packetsLost-prev.packetsLost;
+      if (recvFrames>=0) out.receivedFPS=recvFrames/dt;
+      if (decFrames>=0) out.decodedFPS=decFrames/dt;
+      out.packetsReceivedDelta=recvPackets>=0?recvPackets:null; out.packetsLostDelta=lost>=0?lost:null;
+      const total=Math.max(0,recvPackets)+Math.max(0,lost); if(total>0) out.packetLossPercent=Math.max(0,lost)/total*100;
+      const aggregateDelta=Number.isFinite(cur.videoBytesReceivedTotal)&&Number.isFinite(prev.videoBytesReceivedTotal)?cur.videoBytesReceivedTotal-prev.videoBytesReceivedTotal:null;
+      const selectedDelta=Number.isFinite(cur.bytesReceived)&&Number.isFinite(prev.bytesReceived)?cur.bytesReceived-prev.bytesReceived:null;
+      const transportDelta=Number.isFinite(cur.transportBytesReceived)&&Number.isFinite(prev.transportBytesReceived)?cur.transportBytesReceived-prev.transportBytesReceived:null;
+      const progressed=recvFrames>0||recvPackets>0;
+      if (Number.isFinite(aggregateDelta)&&aggregateDelta>0) {out.bitrateMbps=aggregateDelta*8/dt/1e6;out.bitrateSource='INBOUND_VIDEO_BYTES_SUM';out.bitrateScope='VIDEO';out.bitrateConfidence='DIRECT_COUNTER';}
+      else if (Number.isFinite(selectedDelta)&&selectedDelta>0) {out.bitrateMbps=selectedDelta*8/dt/1e6;out.bitrateSource='SELECTED_INBOUND_VIDEO_BYTES';out.bitrateScope='VIDEO';out.bitrateConfidence='DIRECT_COUNTER';}
+      else if (progressed&&Number.isFinite(transportDelta)&&transportDelta>0) {out.bitrateMbps=transportDelta*8/dt/1e6;out.bitrateSource='CANDIDATE_PAIR_BYTES_FALLBACK';out.bitrateScope='TRANSPORT';out.bitrateConfidence='APPROXIMATE';}
+      else if (!progressed&&aggregateDelta===0) {out.bitrateMbps=0;out.bitrateSource='INBOUND_VIDEO_BYTES_SUM';out.bitrateScope='VIDEO';out.bitrateConfidence='DIRECT_COUNTER';}
+      const dropped=cur.framesDropped-prev.framesDropped; out.framesDroppedDelta=dropped>=0?dropped:null;
+      const freeze=cur.freezeCount-prev.freezeCount; out.freezeDelta=freeze>=0?freeze:null;
+      if (Number.isFinite(cur.totalFreezesDuration)&&Number.isFinite(prev.totalFreezesDuration)&&cur.totalFreezesDuration>=prev.totalFreezesDuration) out.freezeDurationDeltaMs=(cur.totalFreezesDuration-prev.totalFreezesDuration)*1000;
+      const decode=Number.isFinite(cur.totalDecodeTime)&&Number.isFinite(prev.totalDecodeTime)?cur.totalDecodeTime-prev.totalDecodeTime:null;
+      if (Number.isFinite(decode)&&decode>=0&&decFrames>0) out.decodeTimePerFrameMs=decode/decFrames*1000;
     }
   }
-
-  S.rtcPrev = cur;
-  S.rtcLatest = out;
-  S.rtcSource = raw.pcSource || S.rtcSource;
-
-  if (out.codec && out.codec !== S.lastCodec) {
-    addEvent('CODEC_CHANGE', { from: S.lastCodec, to: out.codec });
-    S.lastCodec = out.codec;
-  }
-  if (out.inboundResolution && !sameRes(out.inboundResolution, S.lastInboundResolution)) {
-    addEvent('INBOUND_RESOLUTION_CHANGE', { from: S.lastInboundResolution, to: out.inboundResolution });
-    S.lastInboundResolution = out.inboundResolution;
-  }
-  if (out.pcState && out.pcState !== S.lastPcState) {
-    addEvent('PEER_CONNECTION_STATE', { from: S.lastPcState, to: out.pcState, source: out.pcSource });
-    S.lastPcState = out.pcState;
-  }
-  if ((out.freezeDelta || 0) > 0) addEvent('FREEZE_CHANGE', { delta: out.freezeDelta, total: out.freezeCount });
-  if (out.bitrateSource && out.bitrateSource !== S.lastBitrateSource) {
-    addEvent('BITRATE_SOURCE_CHANGE', { from:S.lastBitrateSource, to:out.bitrateSource, scope:out.bitrateScope, confidence:out.bitrateConfidence });
-    S.lastBitrateSource=out.bitrateSource;
-  }
-
+  S.rtcPrev=cur;
+  if (out.codec&&out.codec!==S.lastCodec) {addEvent('CODEC_CHANGE',{from:S.lastCodec,to:out.codec});S.lastCodec=out.codec;}
+  if (out.inboundResolution&&!sameRes(out.inboundResolution,S.lastInboundResolution)) {addEvent('INBOUND_RESOLUTION_CHANGE',{from:S.lastInboundResolution,to:out.inboundResolution});S.lastInboundResolution=out.inboundResolution;}
+  if (out.pcState&&out.pcState!==S.lastPcState) {addEvent('PEER_CONNECTION_STATE',{from:S.lastPcState,to:out.pcState,source:out.pcSource});S.lastPcState=out.pcState;}
+  if ((out.freezeDelta||0)>0) addEvent('FREEZE_CHANGE',{delta:out.freezeDelta,total:out.freezeCount});
+  if (out.bitrateSource&&out.bitrateSource!==S.lastBitrateSource) {addEvent('BITRATE_SOURCE_CHANGE',{from:S.lastBitrateSource,to:out.bitrateSource,scope:out.bitrateScope,confidence:out.bitrateConfidence});S.lastBitrateSource=out.bitrateSource;}
   return out;
 }
 
-function stableReceiverTrackSettings(settings) {
-  if (!settings) return null;
-  return {
-    width:settings.width ?? null,
-    height:settings.height ?? null,
-    aspectRatio:settings.aspectRatio ?? null,
-    resizeMode:settings.resizeMode ?? null
-  };
-}
-
-function stableContextView(snapshot) {
-  return {
-    sh:snapshot?.sessionHandler || null,
-    pc:snapshot?.peerConnection || null,
-    st:snapshot?.storage || null,
-    receiverHints:snapshot?.receiverHints || null,
-    receiverTrackSettings:stableReceiverTrackSettings(snapshot?.receiverTrackSettings)
-  };
-}
-
-function clientStateEventView(snapshot) {
-  const stable=stableContextView(snapshot);
-  const observedFrameRate=snapshot?.receiverTrackSettings?.frameRate ?? null;
-  return {
-    sessionHandler:stable.sh,
-    peerConnection:stable.pc,
-    storage:stable.st,
-    receiverHints:stable.receiverHints,
-    receiverTrackSettings:stable.receiverTrackSettings,
-    receiverTrackFrameRateObserved:observedFrameRate,
-    receiverTrackFrameRateCadenceTrusted:false
-  };
-}
-
-async function refreshContext(force = false) {
+async function refreshContext(force=false) {
   if (!S.bridgeReady) return 0;
-  if (!force && now() - S.lastContextAt < CONTEXT_MS) return 0;
-  S.lastContextAt = now();
-  const wallStart = now();
-  const r = await bridgeAsk('context', null, 600);
-  if (!r?.ok || !r.snapshot) return now() - wallStart;
-  S.contextLatest = r.snapshot;
-
-  const observedFrameRate=Number(r.snapshot.receiverTrackSettings?.frameRate);
-  if (Number.isFinite(observedFrameRate)) {
-    S.contextTelemetry.frameRateSamples++;
-    S.contextTelemetry.lastObservedFrameRate=observedFrameRate;
-    if (observedFrameRate < 1 || observedFrameRate > 240) S.contextTelemetry.implausibleFrameRateSamples++;
-  }
-
-  const stableView=stableContextView(r.snapshot);
-  const fingerprint=JSON.stringify(stableView);
-  const rawFingerprint=JSON.stringify({stableView,frameRate:r.snapshot.receiverTrackSettings?.frameRate ?? null});
-  if (S.contextRawFingerprint && rawFingerprint !== S.contextRawFingerprint && fingerprint === S.contextFingerprint) {
-    S.contextTelemetry.suppressedFrameRateOnly++;
-  }
-  S.contextRawFingerprint=rawFingerprint;
-
-  if (fingerprint !== S.contextFingerprint) {
-    addEvent('CLIENT_STATE_CHANGE', clientStateEventView(r.snapshot));
-    S.contextTelemetry.changes++;
-    S.contextFingerprint = fingerprint;
-  }
-  return now() - wallStart;
+  if (!force && now()-S.lastContextAt<CONTEXT_MS) return 0;
+  S.lastContextAt=now();
+  const wallStart=now();
+  const r=await bridgeAsk('context',null,600);
+  if (r?.ok && r.snapshot) S.contextLatest=r.snapshot;
+  return now()-wallStart;
 }
 
 function resolutionTargetForMode(mode = lsGet(K.resolutionMode, 'native')) {
@@ -3937,38 +1544,6 @@ function controlSnapshot() {
   };
 }
 
-function currentExperimentPhase() {
-  return S.experimentManager.phases.find(p => p.id === S.experimentManager.currentPhaseId) || null;
-}
-
-function closeExperimentPhase(reason = 'NEXT_PHASE') {
-  const p = currentExperimentPhase();
-  if (p && p.endAtSec == null) {
-    p.endAtSec = round(elapsed(), 3);
-    p.endReason = reason;
-    if (S.control.proof && p.kind === 'VIRTUAL_MONITOR') p.proofFinal = { ...S.control.proof };
-    addEvent('EXPERIMENT_PHASE_END', { id:p.id, label:p.label, reason, proofFinal:p.proofFinal || null });
-  }
-}
-
-function beginExperimentPhase(label, kind, requestedResolution = null, meta = {}) {
-  closeExperimentPhase('NEXT_PHASE');
-  const id = `E${++S.experimentManager.seq}`;
-  const p = {
-    id, label, kind,
-    startAtSec: round(elapsed(), 3),
-    endAtSec: null,
-    requestedResolution,
-    application: meta.application || null,
-    frozen: meta.frozen || S.control.frozen || null,
-    proofFinal: null
-  };
-  S.experimentManager.phases.push(p);
-  S.experimentManager.currentPhaseId = id;
-  addEvent('EXPERIMENT_PHASE_START', { ...p });
-  return p;
-}
-
 function baselineFreezeSnapshot() {
   const latest=S.samples.toArray().at(-1) || {};
   const ctx=S.contextLatest || {};
@@ -3981,8 +1556,7 @@ function baselineFreezeSnapshot() {
     bitrateAuto: auto,
     bitratePreferenceMbps: auto ? null : (Number(lsGet(K.bitrateManual,'0')) || null),
     observedBitrateMbps: latest.bitrateMbps ?? null,
-    inboundResolution: latest.inboundResolution || S.lastInboundResolution || null,
-    renderedResolution: latest.renderedResolution || S.videoState.rendered || null
+    inboundResolution: latest.inboundResolution || S.lastInboundResolution || null
   };
 }
 
@@ -4020,7 +1594,7 @@ async function applyResolutionControl(mode = lsGet(K.resolutionMode, 'native')) 
 
   const sameActive = S.control.state === 'ACTIVE' && S.control.activeMode === mode && sameRes(S.control.activeTarget,target) && S.control.application?.ok;
   if (sameActive) {
-    addEvent('CONTROL_IDEMPOTENT_NOOP',{action:'APPLY',mode,target,reason:'IDENTICAL_TARGET_ALREADY_ACTIVE',phaseId:S.experimentManager.currentPhaseId});
+    addEvent('CONTROL_IDEMPOTENT_NOOP',{action:'APPLY',mode,target,reason:'IDENTICAL_TARGET_ALREADY_ACTIVE'});
     updateUI();
     return S.control.application;
   }
@@ -4051,9 +1625,7 @@ async function applyResolutionControl(mode = lsGet(K.resolutionMode, 'native')) 
       startedAtSec:round(elapsed(),3),
       updatedAtSec:round(elapsed(),3)
     };
-    const label=target ? `RES_${target.width}x${target.height}` : 'RES_NATIVE';
-    const phase=beginExperimentPhase(label,'VIRTUAL_MONITOR',target,{application:result,frozen:S.control.frozen});
-    addEvent('CONTROL_APPLIED', { scope:'STREAM_CONFIG', mode, target, result, phaseId:phase.id, fpsRequested:Number(lsGet(K.fps,'120')) === 60 ? 60 : 120, bitrateRequestedMbps:lsGet(K.bitrateAuto,'true') !== 'false' ? null : (Number(lsGet(K.bitrateManual,'0')) || null) });
+    addEvent('CONTROL_APPLIED', { scope:'STREAM_CONFIG', mode, target, result, fpsRequested:Number(lsGet(K.fps,'120')) === 60 ? 60 : 120, bitrateRequestedMbps:lsGet(K.bitrateAuto,'true') !== 'false' ? null : (Number(lsGet(K.bitrateManual,'0')) || null) });
     await refreshContext(true);
     updateUI();
     return result;
@@ -4069,7 +1641,6 @@ async function disarmResolutionControl() {
   const previous={state:S.control.state,mode:S.control.activeMode,target:S.control.activeTarget,proof:{...S.control.proof}};
   let result=null;
   if (S.control.state === 'ACTIVE') result=await bridgeAsk('control',{kind:'resolutionDisarm'});
-  closeExperimentPhase('DISARM_TO_SAFE');
   S.control.state='SAFE';
   S.mode='SAFE';
   S.control.disarmedAtSec=round(elapsed(),3);
@@ -4081,8 +1652,7 @@ async function disarmResolutionControl() {
   S.control.oneShot=null;
   S.control.oneShotConsumed=false;
   S.control.proof={status:'IDLE',requested:null,inboundBefore:null,inboundObserved:null,matchCount:0,alternateCount:0,startedAtSec:null,updatedAtSec:round(elapsed(),3)};
-  const p=beginExperimentPhase(`BASELINE_RETURN_${S.experimentManager.seq+1}`,'BASELINE_RETURN',null,{frozen:S.control.frozen});
-  addEvent('CONTROL_DISARMED', { previous, result, phaseId:p.id, preferencesPreserved:true });
+  addEvent('CONTROL_DISARMED', { previous, result, preferencesPreserved:true });
   updateUI();
 }
 
@@ -4240,29 +1810,6 @@ function evaluateResolutionProof(sample) {
   }
 }
 
-function validateExperimentIsolation(sample) {
-  if (S.control.state !== 'ACTIVE' || !S.control.frozen) return;
-  const F=S.control.frozen;
-  const issues=[];
-  if (!S.control.fpsApplication && Number.isFinite(F.targetFps) && Number.isFinite(sample.targetFps) && Math.abs(F.targetFps-sample.targetFps) > 0.5) {
-    issues.push({type:'FPS_TARGET_DRIFT',from:F.targetFps,to:sample.targetFps});
-  }
-  if (typeof F.bitrateAuto === 'boolean' && F.bitrateAuto !== sample.bitrateAuto) {
-    issues.push({type:'BITRATE_MODE_DRIFT',from:F.bitrateAuto,to:sample.bitrateAuto});
-  }
-  if (!F.bitrateAuto && Number.isFinite(F.bitratePreferenceMbps) && Number.isFinite(sample.targetBitrateMbps) && F.bitratePreferenceMbps !== sample.targetBitrateMbps) {
-    issues.push({type:'BITRATE_PREFERENCE_DRIFT',from:F.bitratePreferenceMbps,to:sample.targetBitrateMbps});
-  }
-  if (F.codec && sample.codec && String(F.codec).toLowerCase() !== String(sample.codec).toLowerCase()) {
-    issues.push({type:'CODEC_DRIFT',from:F.codec,to:sample.codec});
-  }
-  if (!issues.length) { S.control.confoundSignature=''; return; }
-  const sig=JSON.stringify(issues);
-  if (sig === S.control.confoundSignature) return;
-  S.control.confoundSignature=sig;
-  addEvent('EXPERIMENT_CONFOUND',{phaseId:S.experimentManager.currentPhaseId,issues,telemetry:compactTelemetry(sample)});
-}
-
 function numberCandidate(v) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -4337,878 +1884,53 @@ function classifyPhase(sample) {
   return sample.phase;
 }
 
-function compactTelemetry(s) {
-  if (!s) return null;
-  return {
-    t: s.t,
-    phase: s.phase,
-    experimentPhaseId: s.experimentPhaseId,
-    experimentPhaseLabel: s.experimentPhaseLabel,
-    controlState: s.controlState,
-    measurementEligible: s.measurementEligible,
-    measurementIneligibleReason: s.measurementIneligibleReason,
-    resolutionRequested: s.resolutionRequested,
-    resolutionProofStatus: s.resolutionProofStatus,
-    codec: s.codec,
-    inboundResolution: s.inboundResolution,
-    renderedResolution: s.renderedResolution,
-    controlRequestedFps: s.controlRequestedFps,
-    targetFps: s.targetFps,
-    targetFpsSource: s.targetFpsSource,
-    presentedFPS: s.presentedFPS,
-    rtcFPS: s.rtcFPS,
-    receivedFPS: s.receivedFPS,
-    decodedFPS: s.decodedFPS,
-    targetBitrateMbps: s.targetBitrateMbps,
-    deepAnalyzerEnabled: s.deepAnalyzerEnabled,
-    callbackHz: s.callbackHz,
-    framesPerCallback: s.framesPerCallback,
-    bitrateMbps: s.bitrateMbps,
-    bitrateSource:s.bitrateSource,
-    bitrateScope:s.bitrateScope,
-    bitrateConfidence:s.bitrateConfidence,
-    networkJitterMs: s.networkJitterMs,
-    rttMs: s.rttMs,
-    packetLossPercent: s.packetLossPercent,
-    packetsLostDelta: s.packetsLostDelta,
-    jitterBufferMs: s.jitterBufferMs,
-    jitterBufferTargetMs: s.jitterBufferTargetMs,
-    decodeTimePerFrameMs: s.decodeTimePerFrameMs,
-    processingDelayPerFrameMs:s.processingDelayPerFrameMs,
-    framesDroppedDelta: s.framesDroppedDelta,
-    framesRenderedDelta:s.framesRenderedDelta,
-    playbackDroppedVideoFramesDelta:s.playbackDroppedVideoFramesDelta,
-    qpPerDecodedFrame:s.qpPerDecodedFrame,
-    nackCountDelta:s.nackCountDelta,
-    pliCountDelta:s.pliCountDelta,
-    firCountDelta:s.firCountDelta,
-    freezeDelta: s.freezeDelta
-  };
-}
-
-function correlateAnomalies(sample) {
-  if (sample.phase !== 'STEADY_STATE' || sample.measurementEligible === false) return;
-  const triggers = [];
-  if ((sample.freezeDelta || 0) > 0) triggers.push('FREEZE');
-  if ((sample.framesDroppedDelta || 0) > 0) triggers.push('FRAME_DROP');
-  if ((sample.packetsLostDelta || 0) > 0) triggers.push('PACKET_LOSS');
-
-  const target = sample.targetFps;
-  if (Number.isFinite(target) && target > 0) {
-    if (Number.isFinite(sample.decodedFPS) && sample.decodedFPS < target * 0.75) triggers.push('DECODE_FPS_DROP');
-    if (Number.isFinite(sample.presentedFPS) && sample.presentedFPS < target * 0.75) triggers.push('PRESENTED_FPS_DROP');
-  }
-  if (!triggers.length) return;
-
-  const signature = triggers.join('|');
-  if (signature === S.lastAnomalySignature && sample.t - S.lastAnomalyAt < 2) return;
-  S.lastAnomalySignature = signature;
-  S.lastAnomalyAt = sample.t;
-  addEvent('STREAM_ANOMALY', { triggers, telemetry: compactTelemetry(sample) });
-}
-
-
-// -----------------------------------------------------------------------------
-// LONG SESSION STABILITY TELEMETRY
-// Bounded, low-frequency observability for multi-hour sessions. This is not a
-// memory-leak detector by itself: every signal remains capability-aware.
-// -----------------------------------------------------------------------------
-function longSessionId(prefix='ls') {
-  try {
-    if (typeof globalThis.crypto?.randomUUID === 'function') return `${prefix}-${globalThis.crypto.randomUUID()}`;
-  } catch {}
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
-}
-
-function longSessionCheckpointKey(sessionId, seq) {
-  return `${sessionId}:${String(seq).padStart(8,'0')}`;
-}
-
-function idbRequest(req) {
-  return new Promise((resolve,reject)=>{
-    req.onsuccess=()=>resolve(req.result);
-    req.onerror=()=>reject(req.error || new Error('IDB_REQUEST_FAILED'));
-  });
-}
-
-function idbTransactionDone(tx) {
-  return new Promise((resolve,reject)=>{
-    tx.oncomplete=()=>resolve(true);
-    tx.onerror=()=>reject(tx.error || new Error('IDB_TRANSACTION_FAILED'));
-    tx.onabort=()=>reject(tx.error || new Error('IDB_TRANSACTION_ABORTED'));
-  });
-}
-
-function openLongSessionDb() {
-  return new Promise((resolve,reject)=>{
-    if (typeof indexedDB === 'undefined') return reject(new Error('INDEXEDDB_UNAVAILABLE'));
-    const req=indexedDB.open(LONG_SESSION_DB_NAME,LONG_SESSION_DB_VERSION);
-    req.onupgradeneeded=()=>{
-      const db=req.result;
-      if (!db.objectStoreNames.contains(LONG_SESSION_SESSION_STORE)) {
-        db.createObjectStore(LONG_SESSION_SESSION_STORE,{keyPath:'id'});
-      }
-      if (!db.objectStoreNames.contains(LONG_SESSION_CHECKPOINT_STORE)) {
-        const store=db.createObjectStore(LONG_SESSION_CHECKPOINT_STORE,{keyPath:'key'});
-        store.createIndex('sessionId','sessionId',{unique:false});
-        store.createIndex('capturedAtMs','capturedAtMs',{unique:false});
-      } else {
-        const store=req.transaction.objectStore(LONG_SESSION_CHECKPOINT_STORE);
-        if (!store.indexNames.contains('sessionId')) store.createIndex('sessionId','sessionId',{unique:false});
-        if (!store.indexNames.contains('capturedAtMs')) store.createIndex('capturedAtMs','capturedAtMs',{unique:false});
-      }
-    };
-    req.onsuccess=()=>{
-      const db=req.result;
-      db.onversionchange=()=>{ try { db.close(); } catch {} };
-      resolve(db);
-    };
-    req.onerror=()=>reject(req.error || new Error('INDEXEDDB_OPEN_FAILED'));
-    req.onblocked=()=>reject(new Error('INDEXEDDB_OPEN_BLOCKED'));
-  });
-}
-
-async function idbGetSession(db,id) {
-  const tx=db.transaction(LONG_SESSION_SESSION_STORE,'readonly');
-  return idbRequest(tx.objectStore(LONG_SESSION_SESSION_STORE).get(id));
-}
-
-async function idbGetAllSessions(db) {
-  const tx=db.transaction(LONG_SESSION_SESSION_STORE,'readonly');
-  return idbRequest(tx.objectStore(LONG_SESSION_SESSION_STORE).getAll());
-}
-
-async function idbGetSessionCheckpoints(db,sessionId) {
-  const tx=db.transaction(LONG_SESSION_CHECKPOINT_STORE,'readonly');
-  const store=tx.objectStore(LONG_SESSION_CHECKPOINT_STORE);
-  const index=store.index('sessionId');
-  const rows=await idbRequest(index.getAll(IDBKeyRange.only(sessionId)));
-  return (rows||[]).sort((a,b)=>(a.seq||0)-(b.seq||0));
-}
-
-async function idbDeleteSession(db,sessionId) {
-  const tx=db.transaction([LONG_SESSION_SESSION_STORE,LONG_SESSION_CHECKPOINT_STORE],'readwrite');
-  const done=idbTransactionDone(tx);
-  tx.objectStore(LONG_SESSION_SESSION_STORE).delete(sessionId);
-  const store=tx.objectStore(LONG_SESSION_CHECKPOINT_STORE);
-  const index=store.index('sessionId');
-  await new Promise((resolve,reject)=>{
-    const req=index.openKeyCursor(IDBKeyRange.only(sessionId));
-    req.onsuccess=()=>{
-      const cursor=req.result;
-      if (!cursor) return resolve();
-      store.delete(cursor.primaryKey);
-      cursor.continue();
-    };
-    req.onerror=()=>reject(req.error || new Error('IDB_DELETE_CURSOR_FAILED'));
-  });
-  await done;
-}
-
-async function pruneLongSessionPersistence(db,currentSessionId) {
-  const p=S.longSession.persistence;
-  try {
-    const sessions=(await idbGetAllSessions(db) || [])
-      .filter(x=>x?.id && x.id!==currentSessionId)
-      .sort((a,b)=>(b.lastSeenAtMs||0)-(a.lastSeenAtMs||0));
-    const remove=sessions.slice(Math.max(0,LONG_SESSION_MAX_PERSISTED_SESSIONS-1));
-    for (const meta of remove) await idbDeleteSession(db,meta.id);
-  } catch (e) {
-    p.pruneErrors++;
-    addEvent('LONG_SESSION_PERSISTENCE_PRUNE_ERROR',{message:String(e?.message||e).slice(0,160)});
-  }
-}
-
-async function putLongSessionMeta(meta) {
-  const db=S.longSession.persistence.db;
-  if (!db) return false;
-  const tx=db.transaction(LONG_SESSION_SESSION_STORE,'readwrite');
-  const done=idbTransactionDone(tx);
-  tx.objectStore(LONG_SESSION_SESSION_STORE).put(meta);
-  await done;
-  return true;
-}
-
-async function createLongSessionPersistenceSession(reason='NEW_SESSION') {
-  const p=S.longSession.persistence;
-  const nowWall=Date.now();
-  const id=longSessionId('bcsls');
-  const pageInstanceId=longSessionId('page');
-  const meta={
-    id,
-    schemaVersion:1,
-    version:VERSION,
-    build:BUILD,
-    origin:location.origin,
-    startedAtMs:nowWall,
-    startedAt:new Date(nowWall).toISOString(),
-    lastSeenAtMs:nowWall,
-    lastSeenAt:new Date(nowWall).toISOString(),
-    lastCheckpointAtMs:null,
-    lastCheckpointAt:null,
-    nextSeq:0,
-    pageInstanceCount:1,
-    lastPageInstanceId:pageInstanceId,
-    lab:S.lab,
-    status:'ACTIVE',
-    createReason:reason
-  };
-  await putLongSessionMeta(meta);
-  lsSet(LONG_SESSION_ACTIVE_KEY,id);
-  p.sessionId=id;
-  p.pageInstanceId=pageInstanceId;
-  p.startedAtMs=nowWall;
-  p.nextSeq=0;
-  p.resumed=false;
-  p.recoveredCheckpointCount=0;
-  p.persistedCheckpointCount=0;
-  p.lastPersistAtMs=null;
-  p.lastPersistReason=null;
-  p.mode='INDEXEDDB_NEW';
-  return meta;
-}
-
-async function initLongSessionPersistence() {
-  const p=S.longSession.persistence;
-  if (p.ready) return true;
-  if (p.initInFlight) return p.initInFlight;
-  p.initInFlight=(async()=>{
-    if (!p.eligible) {
-      p.mode='NOT_STREAM_DOCUMENT';
-      p.ready=true;
-      return false;
-    }
-    if (!p.supported) {
-      p.mode='RAM_ONLY_INDEXEDDB_UNAVAILABLE';
-      p.ready=true;
-      addEvent('LONG_SESSION_PERSISTENCE_UNAVAILABLE',{reason:'INDEXEDDB_UNAVAILABLE'});
-      return false;
-    }
-    try {
-      const db=await openLongSessionDb();
-      p.db=db;
-      const activeId=lsGet(LONG_SESSION_ACTIVE_KEY,null);
-      let meta=activeId ? await idbGetSession(db,activeId) : null;
-      const nowWall=Date.now();
-      const resumable=!!meta &&
-        meta.version===VERSION &&
-        meta.origin===location.origin &&
-        Number.isFinite(meta.lastSeenAtMs) &&
-        nowWall-meta.lastSeenAtMs>=0 &&
-        nowWall-meta.lastSeenAtMs<=LONG_SESSION_RESUME_WINDOW_MS;
-
-      if (resumable) {
-        const rows=await idbGetSessionCheckpoints(db,meta.id);
-        const retained=rows.slice(-MAX_LONG_SESSION_CHECKPOINTS);
-        S.longSession.checkpoints.clear();
-        for (const row of retained) if (row?.checkpoint) S.longSession.checkpoints.push(row.checkpoint);
-        const pageInstanceId=longSessionId('page');
-        meta.lastSeenAtMs=nowWall;
-        meta.lastSeenAt=new Date(nowWall).toISOString();
-        meta.pageInstanceCount=(meta.pageInstanceCount||0)+1;
-        meta.lastPageInstanceId=pageInstanceId;
-        meta.status='ACTIVE';
-        await putLongSessionMeta(meta);
-        p.sessionId=meta.id;
-        p.pageInstanceId=pageInstanceId;
-        p.startedAtMs=meta.startedAtMs;
-        p.nextSeq=Math.max(Number(meta.nextSeq)||0,rows.length ? (rows[rows.length-1].seq||0)+1 : 0);
-        p.resumed=true;
-        p.recoveredCheckpointCount=retained.length;
-        p.persistedCheckpointCount=retained.length;
-        p.mode='INDEXEDDB_RESUMED';
-        addEvent('LONG_SESSION_PERSISTENCE_RECOVERED',{
-          sessionId:meta.id,
-          recoveredCheckpointCount:retained.length,
-          pageInstanceCount:meta.pageInstanceCount,
-          gapMs:nowWall-(meta.lastCheckpointAtMs||meta.lastSeenAtMs||nowWall)
-        });
-      } else {
-        if (meta?.id) {
-          try {
-            meta.status='STALE_NOT_RESUMED';
-            meta.lastSeenAtMs=nowWall;
-            meta.lastSeenAt=new Date(nowWall).toISOString();
-            await putLongSessionMeta(meta);
-          } catch {}
-        }
-        meta=await createLongSessionPersistenceSession(activeId ? 'ACTIVE_SESSION_NOT_RESUMABLE' : 'NO_ACTIVE_SESSION');
-        addEvent('LONG_SESSION_PERSISTENCE_STARTED',{sessionId:meta.id,mode:p.mode});
-      }
-      await pruneLongSessionPersistence(db,p.sessionId);
-      p.ready=true;
-      return true;
-    } catch (e) {
-      p.readErrors++;
-      p.mode='RAM_ONLY_INDEXEDDB_ERROR';
-      p.ready=true;
-      addEvent('LONG_SESSION_PERSISTENCE_ERROR',{stage:'INIT',message:String(e?.message||e).slice(0,180)});
-      return false;
-    } finally {
-      p.initInFlight=null;
-    }
-  })();
-  return p.initInFlight;
-}
-
-async function persistLongSessionCheckpoint(checkpoint,reason='TIMER') {
-  const p=S.longSession.persistence;
-  if (!p.ready) await initLongSessionPersistence();
-  if (!p.db || !p.sessionId || !checkpoint) return false;
-  const capturedAtMs=Number.isFinite(checkpoint.capturedAtMs) ? checkpoint.capturedAtMs : Date.now();
-  const seq=p.nextSeq++;
-  checkpoint.persistence={
-    schemaVersion:1,
-    sessionId:p.sessionId,
-    pageInstanceId:p.pageInstanceId,
-    seq,
-    capturedAtMs,
-    capturedAt:new Date(capturedAtMs).toISOString(),
-    logicalElapsedSec:Number.isFinite(p.startedAtMs) ? round((capturedAtMs-p.startedAtMs)/1000,3) : null,
-    pageElapsedSec:checkpoint.t,
-    resumedSession:p.resumed,
-    reason
-  };
-  const row={
-    key:longSessionCheckpointKey(p.sessionId,seq),
-    sessionId:p.sessionId,
-    seq,
-    capturedAtMs,
-    checkpoint
-  };
-  try {
-    // Read metadata before opening the write transaction. Awaiting inside a live
-    // IndexedDB transaction can let the browser auto-commit it between tasks.
-    const meta=await idbGetSession(p.db,p.sessionId);
-    const nextMeta={
-      ...(meta||{}),
-      id:p.sessionId,
-      schemaVersion:1,
-      version:VERSION,
-      build:BUILD,
-      origin:location.origin,
-      startedAtMs:p.startedAtMs,
-      startedAt:Number.isFinite(p.startedAtMs) ? new Date(p.startedAtMs).toISOString() : null,
-      lastSeenAtMs:capturedAtMs,
-      lastSeenAt:new Date(capturedAtMs).toISOString(),
-      lastCheckpointAtMs:capturedAtMs,
-      lastCheckpointAt:new Date(capturedAtMs).toISOString(),
-      nextSeq:p.nextSeq,
-      lastPageInstanceId:p.pageInstanceId,
-      pageInstanceCount:Math.max(1,meta?.pageInstanceCount||1),
-      lab:S.lab,
-      status:'ACTIVE'
-    };
-    const tx=p.db.transaction([LONG_SESSION_SESSION_STORE,LONG_SESSION_CHECKPOINT_STORE],'readwrite');
-    const done=idbTransactionDone(tx);
-    const cpStore=tx.objectStore(LONG_SESSION_CHECKPOINT_STORE);
-    const sessionStore=tx.objectStore(LONG_SESSION_SESSION_STORE);
-    cpStore.put(row);
-    const expiredSeq=seq-MAX_LONG_SESSION_CHECKPOINTS;
-    if (expiredSeq>=0) cpStore.delete(longSessionCheckpointKey(p.sessionId,expiredSeq));
-    sessionStore.put(nextMeta);
-    await done;
-    p.persistedCheckpointCount=Math.min(MAX_LONG_SESSION_CHECKPOINTS,p.persistedCheckpointCount+1);
-    p.lastPersistAtMs=capturedAtMs;
-    p.lastPersistReason=reason;
-    return true;
-  } catch (e) {
-    p.writeErrors++;
-    addEvent('LONG_SESSION_PERSISTENCE_ERROR',{stage:'WRITE',reason,message:String(e?.message||e).slice(0,180)});
-    return false;
-  }
-}
-
-function longSessionPersistenceSnapshot() {
-  const p=S.longSession.persistence;
-  return {
-    supported:p.supported,
-    eligible:p.eligible,
-    ready:p.ready,
-    mode:p.mode,
-    database:LONG_SESSION_DB_NAME,
-    schemaVersion:1,
-    sessionId:p.sessionId,
-    pageInstanceId:p.pageInstanceId,
-    startedAtMs:p.startedAtMs,
-    startedAt:Number.isFinite(p.startedAtMs) ? new Date(p.startedAtMs).toISOString() : null,
-    resumed:p.resumed,
-    recoveredCheckpointCount:p.recoveredCheckpointCount,
-    persistedCheckpointCount:p.persistedCheckpointCount,
-    nextSeq:p.nextSeq,
-    lastPersistAtMs:p.lastPersistAtMs,
-    lastPersistAt:Number.isFinite(p.lastPersistAtMs) ? new Date(p.lastPersistAtMs).toISOString() : null,
-    lastPersistReason:p.lastPersistReason,
-    resumeWindowMs:LONG_SESSION_RESUME_WINDOW_MS,
-    writeErrors:p.writeErrors,
-    readErrors:p.readErrors,
-    pruneErrors:p.pruneErrors,
-    originScoped:true,
-    note:'IndexedDB persistence is origin-scoped. A resumed session preserves prior page checkpoints when reload/crash returns to the same Boosteroid origin.'
-  };
-}
-
-async function rotateLongSessionPersistence(reason='MANUAL_RESET') {
-  const p=S.longSession.persistence;
-  if (!p.ready) await initLongSessionPersistence();
-  if (!p.db) return false;
-  try {
-    if (p.sessionId) {
-      const meta=await idbGetSession(p.db,p.sessionId);
-      if (meta) {
-        meta.status='CLOSED';
-        meta.closedAtMs=Date.now();
-        meta.closedAt=new Date(meta.closedAtMs).toISOString();
-        meta.closeReason=reason;
-        await putLongSessionMeta(meta);
-      }
-    }
-    lsRemove(LONG_SESSION_ACTIVE_KEY);
-    await createLongSessionPersistenceSession(reason);
-    await pruneLongSessionPersistence(p.db,p.sessionId);
-    return true;
-  } catch (e) {
-    p.writeErrors++;
-    addEvent('LONG_SESSION_PERSISTENCE_ERROR',{stage:'ROTATE',reason,message:String(e?.message||e).slice(0,180)});
-    return false;
-  }
-}
-
-function setupLongTaskObserver() {
-  if (!CAP.experimental.longTask || S.longSession.longTaskObserver) return false;
-  try {
-    const obs=new PerformanceObserver(list => {
-      for (const entry of list.getEntries()) {
-        const d=Number(entry.duration);
-        if (!Number.isFinite(d)) continue;
-        S.longSession.longTasks.count++;
-        S.longSession.longTasks.totalMs+=d;
-        S.longSession.longTasks.maxMs=Math.max(S.longSession.longTasks.maxMs,d);
-        S.longSession.longTasks.lastAtSec=round(elapsed(),3);
-      }
-    });
-    obs.observe({type:'longtask',buffered:true});
-    S.longSession.longTaskObserver=obs;
-    return true;
-  } catch (e) {
-    addEvent('LONG_TASK_OBSERVER_UNAVAILABLE',{message:String(e?.message||e).slice(0,160)});
-    return false;
-  }
-}
-
-function setupComputePressureObserver() {
-  if (!CAP.experimental.computePressure || S.longSession.pressureObserver) return false;
-  try {
-    const obs=new PressureObserver(records => {
-      const r=records?.[records.length-1];
-      if (!r) return;
-      const state=typeof r.state==='string' ? r.state : null;
-      if (state && state!==S.longSession.pressure.state) S.longSession.pressure.transitions++;
-      S.longSession.pressure.state=state;
-      S.longSession.pressure.lastAtSec=round(elapsed(),3);
-    });
-    Promise.resolve(obs.observe('cpu',{sampleInterval:10000})).catch(e=>{
-      S.longSession.pressure.error=String(e?.message||e).slice(0,160);
-    });
-    S.longSession.pressureObserver=obs;
-    return true;
-  } catch (e) {
-    S.longSession.pressure.error=String(e?.message||e).slice(0,160);
-    return false;
-  }
-}
-
-function readLegacyJsHeapMemory() {
-  const m=performance.memory;
-  if (!m) return null;
-  const n=v=>Number.isFinite(Number(v)) ? Number(v) : null;
-  return {
-    source:'performance.memory',
-    usedJSHeapSize:n(m.usedJSHeapSize),
-    totalJSHeapSize:n(m.totalJSHeapSize),
-    jsHeapSizeLimit:n(m.jsHeapSizeLimit)
-  };
-}
-
-async function refreshLongSessionMemory(nowMs) {
-  const ls=S.longSession;
-  const legacy=readLegacyJsHeapMemory();
-  if (legacy) ls.latestMemory={...(ls.latestMemory||{}),legacy};
-
-  if (!CAP.experimental.measureUserAgentSpecificMemory ||
-      !CAP.experimental.crossOriginIsolated ||
-      ls.memoryProbeInFlight ||
-      nowMs-ls.lastMemoryProbeAtMs < LONG_SESSION_MEMORY_MS) return;
-
-  ls.lastMemoryProbeAtMs=nowMs;
-  ls.memoryProbeInFlight=true;
-  try {
-    const r=await performance.measureUserAgentSpecificMemory();
-    ls.latestMemory={
-      ...(ls.latestMemory||{}),
-      userAgentSpecific:{
-        source:'measureUserAgentSpecificMemory',
-        bytes:Number.isFinite(r?.bytes) ? r.bytes : null,
-        breakdownCount:Array.isArray(r?.breakdown) ? r.breakdown.length : null
-      }
-    };
-  } catch (e) {
-    ls.latestMemory={...(ls.latestMemory||{}),userAgentSpecific:{error:String(e?.message||e).slice(0,160)}};
-  } finally {
-    ls.memoryProbeInFlight=false;
-  }
-}
-
-async function refreshLongSessionStorage(nowMs) {
-  const ls=S.longSession;
-  if (!CAP.experimental.storageEstimate ||
-      nowMs-ls.lastStorageProbeAtMs < LONG_SESSION_STORAGE_MS) return;
-  ls.lastStorageProbeAtMs=nowMs;
-  try {
-    const r=await navigator.storage.estimate();
-    ls.latestStorage={
-      usageBytes:Number.isFinite(r?.usage) ? r.usage : null,
-      quotaBytes:Number.isFinite(r?.quota) ? r.quota : null
-    };
-  } catch (e) {
-    ls.latestStorage={error:String(e?.message||e).slice(0,160)};
-  }
-}
-
-function longSessionResourceSnapshot() {
-  const pc=S.contextLatest?.peerConnection || null;
-  return {
-    bridgePending:bridgePending.size,
-    retainedSamples:S.samples.count,
-    overwrittenSamples:Math.max(0,S.samples.total-S.samples.count),
-    retainedEvents:S.events.count,
-    overwrittenEvents:Math.max(0,S.events.total-S.events.count),
-    retainedImportantEvents:S.importantEvents.count,
-    overwrittenImportantEvents:Math.max(0,S.importantEvents.total-S.importantEvents.count),
-    clientStateChanges:S.contextTelemetry.changes,
-    suppressedFrameRateOnlyStateChanges:S.contextTelemetry.suppressedFrameRateOnly,
-    experimentPhases:S.experimentManager.phases.length,
-    videoBindCount:S.longSession.videoBindCount,
-    videoRemovedCount:S.longSession.videoRemovedCount,
-    surfaceObserverBindCount:S.longSession.surfaceObserverBindCount,
-    videoElements:document.querySelectorAll('video').length,
-    iframeElements:document.querySelectorAll('iframe').length,
-    canvasElements:document.querySelectorAll('canvas').length,
-    peerConnectionResources:pc?.resources || null
-  };
-}
-
-function buildLongSessionCheckpoint() {
-  const s=S.latestSample;
-  const lt=S.longSession.longTasks;
-  const capturedAtMs=Date.now();
-  const checkpoint={
-    t:round(elapsed(),3),
-    capturedAtMs,
-    capturedAt:new Date(capturedAtMs).toISOString(),
-    logicalElapsedSec:Number.isFinite(S.longSession.persistence.startedAtMs)
-      ? round((capturedAtMs-S.longSession.persistence.startedAtMs)/1000,3)
-      : null,
-    streamActive:!!s?.streamActive,
-    measurementEligible:s?.measurementEligible ?? null,
-    phase:s?.phase ?? null,
-    codec:s?.codec ?? S.lastCodec ?? null,
-    inboundResolution:s?.inboundResolution ?? S.lastInboundResolution ?? null,
-    rtcFPS:s?.rtcFPS ?? null,
-    receivedFPS:s?.receivedFPS ?? null,
-    decodedFPS:s?.decodedFPS ?? null,
-    bitrateMbps:s?.bitrateMbps ?? null,
-    bitrateSource:s?.bitrateSource ?? null,
-    bitrateScope:s?.bitrateScope ?? null,
-    bitrateConfidence:s?.bitrateConfidence ?? null,
-    rttMs:s?.rttMs ?? null,
-    networkJitterMs:s?.networkJitterMs ?? null,
-    packetLossPercent:s?.packetLossPercent ?? null,
-    jitterBufferMs:s?.jitterBufferMs ?? null,
-    decodeTimePerFrameMs:s?.decodeTimePerFrameMs ?? null,
-    processingDelayPerFrameMs:s?.processingDelayPerFrameMs ?? null,
-    framesDroppedDelta:s?.framesDroppedDelta ?? null,
-    freezeDelta:s?.freezeDelta ?? null,
-    playbackDropPercent:s?.playbackDropPercent ?? null,
-    decoderImplementation:s?.decoderImplementation ?? null,
-    powerEfficientDecoder:s?.powerEfficientDecoder ?? null,
-    suiteLocalWorkMs:s?.suiteLocalWorkMs ?? null,
-    suiteCycleWallMs:s?.suiteCycleWallMs ?? null,
-    memory:S.longSession.latestMemory,
-    storage:S.longSession.latestStorage,
-    computePressure:{...S.longSession.pressure},
-    longTasks:{
-      countTotal:lt.count,
-      durationTotalMs:round(lt.totalMs,3),
-      maxMs:round(lt.maxMs,3),
-      countDelta:lt.count-lt.prevCount,
-      durationDeltaMs:round(lt.totalMs-lt.prevTotalMs,3),
-      lastAtSec:lt.lastAtSec
-    },
-    resources:longSessionResourceSnapshot()
-  };
-  lt.prevCount=lt.count;
-  lt.prevTotalMs=lt.totalMs;
-  return checkpoint;
-}
-
-async function collectLongSessionCheckpoint(reason='TIMER') {
-  try {
-    const nowMs=now();
-    await Promise.all([
-      refreshLongSessionMemory(nowMs),
-      refreshLongSessionStorage(nowMs)
-    ]);
-    const checkpoint=buildLongSessionCheckpoint();
-    checkpoint.reason=reason;
-    S.longSession.checkpoints.push(checkpoint);
-    await persistLongSessionCheckpoint(checkpoint,reason);
-  } catch (e) {
-    S.longSession.checkpointErrors++;
-    addEvent('LONG_SESSION_CHECKPOINT_ERROR',{message:String(e?.message||e).slice(0,160)});
-  }
-}
-
-function scheduleLongSessionCheckpoint(delay=LONG_SESSION_CHECKPOINT_MS) {
-  if (!S.longSession.running) return;
-  clearTimeout(S.longSession.timer);
-  S.longSession.timer=setTimeout(async()=>{
-    await collectLongSessionCheckpoint('TIMER');
-    scheduleLongSessionCheckpoint(LONG_SESSION_CHECKPOINT_MS);
-  },delay);
-}
-
-function bindLongSessionLifecyclePersistence() {
-  const p=S.longSession.persistence;
-  if (p.lifecycleBound) return;
-  p.lifecycleBound=true;
-  window.addEventListener('pagehide',()=>{ void collectLongSessionCheckpoint('PAGEHIDE'); },{capture:true});
-  document.addEventListener('visibilitychange',()=>{
-    if (document.hidden) void collectLongSessionCheckpoint('DOCUMENT_HIDDEN');
-  },{passive:true});
-}
-
-async function startLongSessionMonitor() {
-  if (S.longSession.running) return;
-  S.longSession.running=true;
-  setupLongTaskObserver();
-  setupComputePressureObserver();
-  bindLongSessionLifecyclePersistence();
-  await initLongSessionPersistence();
-  scheduleLongSessionCheckpoint(5000);
-}
-
-async function resetLongSessionTelemetry(newPersistentSession=false) {
-  S.longSession.checkpoints.clear();
-  S.longSession.lastMemoryProbeAtMs=-Infinity;
-  S.longSession.lastStorageProbeAtMs=-Infinity;
-  S.longSession.latestMemory=null;
-  S.longSession.latestStorage=null;
-  S.longSession.checkpointErrors=0;
-  const lt=S.longSession.longTasks;
-  lt.count=0; lt.totalMs=0; lt.maxMs=0; lt.lastAtSec=null; lt.prevCount=0; lt.prevTotalMs=0;
-  S.longSession.videoBindCount=S.video ? 1 : 0;
-  S.longSession.videoRemovedCount=0;
-  S.longSession.surfaceObserverBindCount=S.surface.resizeObserver ? 1 : 0;
-  if (newPersistentSession) await rotateLongSessionPersistence('RECORDING_RESET');
-}
+// Long-session diagnostics were removed from the default runtime by PLAY-FIRST pruning.
+// Reintroduce only as temporary/on-demand tooling if a real long-session issue returns.
 
 // -----------------------------------------------------------------------------
 // SAMPLER / PERFORMANCE GUARD
 // -----------------------------------------------------------------------------
 async function sampleOnce() {
-  const cycleStart = now();
-  S.sampler.samplesAttempted++;
-
-  let localWorkMs = 0;
-  let syncStart = now();
+  const cycleStart=now(); S.sampler.samplesAttempted++;
+  let localWorkMs=0, syncStart=now();
   snapshotVideo();
-  const playback=processPlaybackQuality(readPlaybackQuality());
-  const surface = {
-    rendered: S.surface.rendered,
-    viewport: S.surface.viewport,
-    orientation: S.surface.orientation,
-    objectFit:S.surface.objectFit,
-    objectPosition:S.surface.objectPosition
-  };
-  const sampleNow = now();
+  const sampleNow=now();
   const eligibility=measurementEligibility();
-  const compositor = consumeCompositorSample(sampleNow);
-  localWorkMs += now() - syncStart;
+  localWorkMs+=now()-syncStart;
 
-  const bridgeStart = now();
-  const rawRtc = S.bridgeReady
-    ? await bridgeAsk('stats', null, 850)
-    : { ok: false, error: 'BRIDGE_NOT_READY' };
-  const bridgeStatsWallMs = S.bridgeReady ? now() - bridgeStart : 0;
+  const bridgeStart=now();
+  const rawRtc=S.bridgeReady ? await bridgeAsk('stats',null,850) : {ok:false,error:'BRIDGE_NOT_READY'};
+  const bridgeStatsWallMs=S.bridgeReady?now()-bridgeStart:0;
 
-  syncStart = now();
-  const rtc = processRtc(rawRtc, sampleNow);
-  localWorkMs += now() - syncStart;
+  syncStart=now(); const rtc=processRtc(rawRtc,sampleNow); localWorkMs+=now()-syncStart;
+  const contextWallMs=await refreshContext(false)||0;
 
-  const contextWallMs = await refreshContext(false) || 0;
-
-  syncStart = now();
-  const control = controlSnapshot();
-  const target = resolveTargetFps(control);
-  const sample = {
-    t: round(elapsed(), 3),
-    phase: S.phase.current,
-    streamActive: !!S.video && (S.video.readyState || 0) >= 2,
-    lab: S.lab,
-    network: S.network,
-    networkAuto: detectNetworkAuto(),
-    mode: S.mode,
-    controlState: S.control.state,
-    measurementEligible: eligibility.eligible,
-    measurementIneligibleReason: eligibility.reason,
-    experimentPhaseId: S.experimentManager.currentPhaseId,
-    experimentPhaseLabel: currentExperimentPhase()?.label || null,
-    resolutionPreferenceMode: lsGet(K.resolutionMode,'native'),
-    resolutionRequested: S.control.activeTarget,
-    resolutionProofStatus: S.control.proof?.status || 'IDLE',
-
-    videoResolution: S.videoState.resolution,
-    renderedResolution: S.videoState.rendered,
-    intrinsicVideoCssPx: S.videoState.resolution,
-    elementBoxCssPx: S.videoState.rendered,
-    rvfcMediaFramePx: S.deep.enabled && Number.isFinite(S.deep.enabledAtSec) && Number.isFinite(S.lastFrameAt) && S.lastFrameAt>=S.deep.enabledAtSec ? S.videoState.rvfcMediaFrame : null,
-    objectFit: surface.objectFit,
-    objectPosition: surface.objectPosition,
-    elementBoxToIntrinsicScaleX: S.videoState.resolution?.width>0 && S.videoState.rendered?.width>0 ? round(S.videoState.rendered.width/S.videoState.resolution.width,6) : null,
-    elementBoxToIntrinsicScaleY: S.videoState.resolution?.height>0 && S.videoState.rendered?.height>0 ? round(S.videoState.rendered.height/S.videoState.resolution.height,6) : null,
-    viewport: surface.viewport,
-    orientation: surface.orientation,
-    videoReadyState: S.videoState.readyState,
-    playbackQualityAvailable: playback.available,
-    playbackTotalVideoFramesRaw: playback.totalVideoFramesRaw,
-    playbackDroppedVideoFramesRaw: playback.droppedVideoFramesRaw,
-    playbackTotalVideoFramesDelta: playback.totalVideoFramesDelta,
-    playbackDroppedVideoFramesDelta: playback.droppedVideoFramesDelta,
-    playbackDropPercent: round(playback.dropPercent,5),
-
-    presentedFPS: compositor.presentedFPS,
-    presentedFramesDelta: compositor.presentedFramesDelta,
-    callbackHz: compositor.callbackHz,
-    callbackCountDelta: compositor.callbackCountDelta,
-    callbackIntervalMeanMs: compositor.callbackIntervalMeanMs,
-    callbackJitterMs: compositor.callbackJitterMs,
-    callbackIntervalMinMs: compositor.callbackIntervalMinMs,
-    callbackIntervalMaxMs: compositor.callbackIntervalMaxMs,
-    framesPerCallback: compositor.framesPerCallback,
-    multiFrameCallbacks: compositor.multiFrameCallbacks,
-    processingDurationMs: compositor.processingDurationMs,
-    callbackLatenessMs: compositor.callbackLatenessMs,
-    compositorRegimeHz: compositor.compositorRegimeHz,
-    deepAnalyzerEnabled: S.deep.enabled,
-    deepCallbackWorkCountDelta: compositor.deepCallbackWorkCountDelta,
-    deepCallbackWorkTotalMs: compositor.deepCallbackWorkTotalMs,
-    deepCallbackWorkAvgMs: compositor.deepCallbackWorkAvgMs,
-
-    pcSource: rtc?.pcSource ?? null,
-    pcState: rtc?.pcState ?? null,
-    codec: rtc?.codec ?? S.lastCodec,
-    inboundResolution: rtc?.inboundResolution ?? S.lastInboundResolution,
-    inboundFramePx: rtc?.inboundResolution ?? S.lastInboundResolution,
-    receiverTrackSettings: S.contextLatest?.receiverTrackSettings || null,
-    rtcFPS: round(rtc?.rtcFPS, 3),
-    receivedFPS: round(rtc?.receivedFPS, 3),
-    decodedFPS: round(rtc?.decodedFPS, 3),
-    bitrateMbps: round(rtc?.bitrateMbps, 3),
-    bitrateSource:rtc?.bitrateSource ?? null,
-    bitrateScope:rtc?.bitrateScope ?? null,
-    bitrateConfidence:rtc?.bitrateConfidence ?? null,
-    networkJitterMs: round(rtc?.networkJitterMs, 3),
-    rttMs: round(rtc?.rttMs, 3),
-    availableIncomingMbps: round(rtc?.availableIncomingMbps, 3),
-    packetsReceivedDelta: rtc?.packetsReceivedDelta ?? null,
-    packetsLostDelta: rtc?.packetsLostDelta ?? null,
-    packetsLostRaw: rtc?.packetsLostRaw ?? null,
-    packetLossPercent: round(rtc?.packetLossPercent, 5),
-    packetsDiscardedRaw: rtc?.packetsDiscardedRaw ?? null,
-    jitterBufferMs: round(rtc?.jitterBufferMs, 3),
-    jitterBufferTargetMs: round(rtc?.jitterBufferTargetMs, 3),
-    jitterBufferMinimumMs: round(rtc?.jitterBufferMinimumMs, 3),
-    framesReceivedRaw: rtc?.framesReceivedRaw ?? null,
-    framesReceivedDelta: rtc?.framesReceivedDelta ?? null,
-    framesDecodedRaw: rtc?.framesDecodedRaw ?? null,
-    framesDecodedDelta: rtc?.framesDecodedDelta ?? null,
-    framesDroppedRaw: rtc?.framesDroppedRaw ?? null,
-    framesDroppedDelta: rtc?.framesDroppedDelta ?? null,
-    framesRenderedRaw: rtc?.framesRenderedRaw ?? null,
-    framesRenderedDelta: rtc?.framesRenderedDelta ?? null,
-    renderedFPSFromStats: round(rtc?.renderedFPSFromStats,3),
-    decodeTimePerFrameMs: round(rtc?.decodeTimePerFrameMs, 3),
-    processingDelayPerFrameMs: round(rtc?.processingDelayPerFrameMs,3),
-    renderInterFrameMeanMs: round(rtc?.renderInterFrameMeanMs,3),
-    renderInterFrameStdDevMs: round(rtc?.renderInterFrameStdDevMs,3),
-    qpSumRaw: rtc?.qpSumRaw ?? null,
-    qpSumDelta: rtc?.qpSumDelta ?? null,
-    qpPerDecodedFrame: round(rtc?.qpPerDecodedFrame,4),
-    corruptionMeasurementsRaw: rtc?.corruptionMeasurementsRaw ?? null,
-    corruptionMeasurementsDelta: rtc?.corruptionMeasurementsDelta ?? null,
-    corruptionProbabilityMean: round(rtc?.corruptionProbabilityMean,6),
-    corruptionProbabilityStdDev: round(rtc?.corruptionProbabilityStdDev,6),
-    nackCountRaw: rtc?.nackCountRaw ?? null,
-    nackCountDelta: rtc?.nackCountDelta ?? null,
-    pliCountRaw: rtc?.pliCountRaw ?? null,
-    pliCountDelta: rtc?.pliCountDelta ?? null,
-    firCountRaw: rtc?.firCountRaw ?? null,
-    firCountDelta: rtc?.firCountDelta ?? null,
-    retransmittedPacketsReceivedRaw: rtc?.retransmittedPacketsReceivedRaw ?? null,
-    retransmittedPacketsReceivedDelta: rtc?.retransmittedPacketsReceivedDelta ?? null,
-    retransmittedBytesReceivedRaw: rtc?.retransmittedBytesReceivedRaw ?? null,
-    retransmittedBytesReceivedDelta: rtc?.retransmittedBytesReceivedDelta ?? null,
-    framesAssembledFromMultiplePacketsRaw: rtc?.framesAssembledFromMultiplePacketsRaw ?? null,
-    framesAssembledFromMultiplePacketsDelta: rtc?.framesAssembledFromMultiplePacketsDelta ?? null,
-    assemblyTimePerMultiPacketFrameMs: round(rtc?.assemblyTimePerMultiPacketFrameMs,3),
-    pauseCountRaw: rtc?.pauseCountRaw ?? null,
-    pauseCountDelta: rtc?.pauseCountDelta ?? null,
-    totalPausesDuration: rtc?.totalPausesDuration ?? null,
-    freezeCount: rtc?.freezeCount ?? null,
-    freezeDelta: rtc?.freezeDelta ?? null,
-    totalFreezesDurationRaw: rtc?.totalFreezesDurationRaw ?? null,
-    freezeDurationDeltaMs: round(rtc?.freezeDurationDeltaMs,3),
-    decoderImplementation: rtc?.decoderImplementation ?? null,
-    powerEfficientDecoder: rtc?.powerEfficientDecoder ?? null,
-
-    targetFps: target.value,
-    targetFpsSource: target.source,
-    controlRequestedFps: control.fpsRequested,
-    targetBitrateMbps: control.bitrateRequestedMbps,
-    bitrateAuto: control.bitrateAuto,
-    resolutionMode: control.preferenceMode,
-    receiverHints: S.contextLatest?.receiverHints || null
+  syncStart=now();
+  const control=controlSnapshot();
+  const target=resolveTargetFps(control);
+  const sample={
+    t:round(elapsed(),3),phase:S.phase.current,streamActive:!!S.video&&(S.video.readyState||0)>=2,
+    lab:S.lab,network:S.network,networkAuto:detectNetworkAuto(),mode:S.mode,controlState:S.control.state,
+    measurementEligible:eligibility.eligible,measurementIneligibleReason:eligibility.reason,
+    resolutionPreferenceMode:lsGet(K.resolutionMode,'native'),resolutionRequested:S.control.activeTarget,resolutionProofStatus:S.control.proof?.status||'IDLE',
+    videoResolution:S.videoState.resolution,videoReadyState:S.videoState.readyState,
+    pcSource:rtc?.pcSource??null,pcState:rtc?.pcState??null,codec:rtc?.codec??S.lastCodec,inboundResolution:rtc?.inboundResolution??S.lastInboundResolution,
+    rtcFPS:round(rtc?.rtcFPS,3),receivedFPS:round(rtc?.receivedFPS,3),decodedFPS:round(rtc?.decodedFPS,3),
+    bitrateMbps:round(rtc?.bitrateMbps,3),bitrateSource:rtc?.bitrateSource??null,bitrateScope:rtc?.bitrateScope??null,bitrateConfidence:rtc?.bitrateConfidence??null,
+    networkJitterMs:round(rtc?.networkJitterMs,3),rttMs:round(rtc?.rttMs,3),availableIncomingMbps:round(rtc?.availableIncomingMbps,3),packetLossPercent:round(rtc?.packetLossPercent,5),
+    framesDroppedDelta:rtc?.framesDroppedDelta??null,freezeDelta:rtc?.freezeDelta??null,freezeDurationDeltaMs:round(rtc?.freezeDurationDeltaMs,3),decodeTimePerFrameMs:round(rtc?.decodeTimePerFrameMs,3),
+    targetFps:target.value,targetFpsSource:target.source,controlRequestedFps:control.fpsRequested,targetBitrateMbps:control.bitrateRequestedMbps,bitrateAuto:control.bitrateAuto,resolutionMode:control.preferenceMode
   };
+  classifyPhase(sample); evaluateResolutionProof(sample); sample.resolutionProofStatus=S.control.proof?.status||sample.resolutionProofStatus;
+  localWorkMs+=now()-syncStart;
 
-  classifyPhase(sample);
-  evaluateResolutionProof(sample);
-  validateExperimentIsolation(sample);
-  sample.resolutionProofStatus = S.control.proof?.status || sample.resolutionProofStatus;
-  correlateAnomalies(sample);
-  localWorkMs += now() - syncStart;
-
-  const beforeUi = now();
-  if (S.ui.open) updateUI(sample);
-  const uiCostMs = S.ui.open ? now() - beforeUi : 0;
-  const cycleWallMs = now() - cycleStart;
-
-  S.sampler.lastCycleWallMs = cycleWallMs;
-  S.sampler.lastLocalWorkMs = localWorkMs;
-  S.sampler.lastBridgeStatsWallMs = bridgeStatsWallMs;
-  S.sampler.lastContextWallMs = contextWallMs;
-  S.sampler.lastUiCostMs = uiCostMs;
-
-  sample.suiteCycleWallMs = round(cycleWallMs, 3);
-  sample.suiteLocalWorkMs = round(localWorkMs, 3);
-  sample.suiteBridgeStatsWallMs = round(bridgeStatsWallMs, 3);
-  sample.suiteContextWallMs = round(contextWallMs, 3);
-  sample.suiteUiCostMs = round(uiCostMs, 3);
-
-  S.latestSample=sample;
-  if (S.recording) S.samples.push(sample);
-  if (S.measurement.resumeGraceSamples > 0) S.measurement.resumeGraceSamples--;
-  if (cycleWallMs >= SAMPLE_MS) S.sampler.skipped++;
+  const beforeUi=now(); if (S.ui.open) updateUI(sample); const uiCostMs=S.ui.open?now()-beforeUi:0;
+  const cycleWallMs=now()-cycleStart;
+  S.sampler.lastCycleWallMs=cycleWallMs; S.sampler.lastLocalWorkMs=localWorkMs; S.sampler.lastBridgeStatsWallMs=bridgeStatsWallMs; S.sampler.lastContextWallMs=contextWallMs; S.sampler.lastUiCostMs=uiCostMs;
+  sample.suiteCycleWallMs=round(cycleWallMs,3); sample.suiteLocalWorkMs=round(localWorkMs,3); sample.suiteBridgeStatsWallMs=round(bridgeStatsWallMs,3); sample.suiteContextWallMs=round(contextWallMs,3); sample.suiteUiCostMs=round(uiCostMs,3);
+  S.latestSample=sample; S.samples.push(sample);
+  if (S.measurement.resumeGraceSamples>0) S.measurement.resumeGraceSamples--;
+  if (cycleWallMs>=SAMPLE_MS) S.sampler.skipped++;
   return cycleWallMs;
 }
 
@@ -5231,1089 +1953,175 @@ function startSampler() {
   setTimeout(samplerLoop, 100);
 }
 
-function resetFrameSessionStats() {
-  const f = S.frame;
-  f.histogram.fill(0);
-  f.histCount = 0;
-  f.histSum = 0;
-  f.histSumSq = 0;
-  f.histMin = Infinity;
-  f.histMax = 0;
-  f.prevSamplePresentedFrames = f.lastPresentedFrames;
-  f.prevSampleCallbacks = f.callbacks;
-  f.prevSampleTime = now();
-  f.regime = null;
-  f.regimeCandidate = null;
-  f.regimeCandidateCount = 0;
-  S.deep.prevSampleCallbacksProcessed=S.deep.callbacksProcessed;
-  S.deep.prevSampleWorkTotalMs=S.deep.callbackWorkTotalMs;
-}
-
-async function startRecording() {
-  // v0.8: recording/Analyzer lifecycle must never disarm or rewrite Stream Control.
-  S.samples.clear();
-  S.events.clear();
-  S.importantEvents.clear();
-  resetInputProbeTelemetry(true);
-  S.contextFingerprint='';
-  S.contextRawFingerprint='';
-  S.contextTelemetry={changes:0,suppressedFrameRateOnly:0,frameRateSamples:0,implausibleFrameRateSamples:0,lastObservedFrameRate:null};
-  S.lastBitrateSource=null;
-  S.latestSample=null;
-  await resetLongSessionTelemetry(true);
-  S.sessionStartPerf = now();
-  S.sessionStartDate = new Date();
-  S.recording = true;
-  S.firstVideoAt = S.video ? 0 : null;
-  S.firstMetadataAt = S.video && S.video.readyState >= 1 ? 0 : null;
-  S.firstPlayingAt = S.video && !S.video.paused && S.video.readyState >= 2 ? 0 : null;
-  S.firstFrameAt = null;
-  S.lastFrameAt = null;
-  S.rtcPrev = null;
-  S.measurement.hidden=!!document.hidden;
-  S.measurement.videoPaused=!!S.video?.paused;
-  S.measurement.resumeGraceSamples=0;
-  S.measurement.lastReanchorReason=null;
-  S.measurement.lastReanchorAtSec=null;
-  S.phase.current = 'PRE_STREAM';
-  S.phase.startupAtSec = null;
-  S.phase.steadyAtSec = null;
-  S.phase.stableCount = 0;
-  S.lastAnomalySignature = '';
-  S.lastAnomalyAt = -Infinity;
-  S.experimentManager={seq:0,currentPhaseId:'E0',phases:[{id:'E0',label:'BASELINE',kind:'BASELINE',startAtSec:0,endAtSec:null,requestedResolution:null,application:null,proofFinal:null}]};
-  resetFrameSessionStats();
-  resetDeepPerformanceStats();
-  if (S.deep.enabled) scheduleDeepFrameLoop(S.video);
-  surfaceSnapshot('RECORDING_START', false);
-  addEvent('RECORDING_START', { version: VERSION, build: BUILD, lab: S.lab, network: S.network, mode: S.mode, controlPreserved:true, deepAnalyzer:S.deep.enabled });
-  updateUI();
-}
-
-function stopRecording(reason = 'USER') {
-  if (!S.recording) return;
-  if (S.deep.enabled) setDeepAnalyzerEnabled(false, `RECORDING_STOP_${reason}`);
-  addEvent('RECORDING_STOP', { reason, controlPreserved:true });
-  S.recording = false;
-  updateUI();
-}
-
 // -----------------------------------------------------------------------------
-// ANALYZER / EXPORT (v0.8: DEEP collection is on-demand; export analysis remains out of hot path)
+// SUPPORT EXPORT - PLAY-FIRST
+// Compact rolling snapshot; one stringify; exporting does not stop gameplay.
 // -----------------------------------------------------------------------------
-function buildMetricStatistics(samples) {
-  const eligible = samples.filter(s => s.measurementEligible !== false);
-  const active = eligible.filter(s => s.streamActive || Number.isFinite(s.bitrateMbps));
-  const col = key => active.map(s => s[key]).filter(Number.isFinite);
+function supportSampleView(s) {
   return {
-    sampleCount: samples.length,
-    eligibleSamples: eligible.length,
-    ineligibleSamples: samples.length-eligible.length,
-    activeSamples: active.length,
-    approxActiveSeconds: active.length * SAMPLE_MS / 1000,
-
-    streamPipeline: {
-      presentedFPS: stats(col('presentedFPS')),
-      rtcFPS: stats(col('rtcFPS')),
-      receivedFPS: stats(col('receivedFPS')),
-      decodedFPS: stats(col('decodedFPS'))
-    },
-    compositor: {
-      callbackHz: stats(col('callbackHz')),
-      callbackIntervalMeanMs: stats(col('callbackIntervalMeanMs')),
-      callbackJitterMs: stats(col('callbackJitterMs')),
-      framesPerCallback: stats(col('framesPerCallback')),
-      processingDurationMs: stats(col('processingDurationMs')),
-      callbackLatenessMs: stats(col('callbackLatenessMs'))
-    },
-    network: {
-      bitrateMbps: stats(col('bitrateMbps').filter(v => v >= 0)),
-      networkJitterMs: stats(col('networkJitterMs')),
-      rttMs: stats(col('rttMs')),
-      packetLossPercent: stats(col('packetLossPercent')),
-      packetsLostDeltaTotal: active.reduce((a, s) => a + (Number.isFinite(s.packetsLostDelta) ? s.packetsLostDelta : 0), 0)
-    },
-    buffer: {
-      jitterBufferMs: stats(col('jitterBufferMs')),
-      jitterBufferTargetMs: stats(col('jitterBufferTargetMs')),
-      jitterBufferMinimumMs: stats(col('jitterBufferMinimumMs'))
-    },
-    decoder: {
-      decodeTimePerFrameMs: stats(col('decodeTimePerFrameMs')),
-      framesDroppedDeltaTotal: active.reduce((a, s) => a + (Number.isFinite(s.framesDroppedDelta) ? s.framesDroppedDelta : 0), 0),
-      freezeDeltaTotal: active.reduce((a, s) => a + (Number.isFinite(s.freezeDelta) ? s.freezeDelta : 0), 0)
-    }
-  };
-}
-
-function buildStatistics(samples) {
-  const preStream = samples.filter(s => s.phase === 'PRE_STREAM');
-  const startup = samples.filter(s => s.phase === 'STARTUP');
-  const steady = samples.filter(s => s.phase === 'STEADY_STATE');
-  return {
-    phasePolicy: {
-      startupDetection: 'ACTIVE_STREAM_DETECTED',
-      steadyStateDetection: `PC_CONNECTED + RECEIVE/DECODE + CODEC/RESOLUTION for ${STARTUP_STABLE_SAMPLES} consecutive samples`,
-      fixedTimeStartupCutoff: false,
-      measurementEligibility: 'EXCLUDES VIDEO_PAUSED + DOCUMENT_HIDDEN + 2 SAMPLE RESUME GRACE; DELTAS REANCHORED ON RESUME'
-    },
-    preStream: buildMetricStatistics(preStream),
-    startup: buildMetricStatistics(startup),
-    steadyState: buildMetricStatistics(steady),
-    allRecorded: buildMetricStatistics(samples)
-  };
-}
-
-function observerHealth(samples) {
-  const metric = key => stats(samples.map(s => s[key]).filter(Number.isFinite));
-  return {
-    architecture: S.control.state === 'ACTIVE' ? 'LEAN_SAFE_BRIDGE__VIRTUAL_MONITOR_ACTIVE' : 'LEAN_SAFE_BRIDGE',
-    measurementEngine: 'PHASE_AWARE_STREAM_PIPELINE_COMPOSITOR_RESOLUTION_EXPERIMENTS_AND_PAUSE_RESUME_ELIGIBILITY',
-    sampleIntervalMs: SAMPLE_MS,
-    uiPolicy: 'DOM_UPDATES_ONLY_WHEN_PANEL_OPEN_AND_ONLY_CHANGED_TEXT',
-    performanceGuardVersion: 2,
-    frameHotPath: S.deep.enabled ? 'DEEP_RVFC_ON_DEMAND' : 'DEEP_RVFC_OFF',
-    deepAnalyzerEnabled: S.deep.enabled,
-    heavyAnalysisDuringGameplay: S.deep.enabled,
-    attemptedSamples: S.sampler.samplesAttempted,
-    retainedSamples: samples.length,
-    overwrittenSamples: Math.max(0, S.samples.total - S.samples.count),
-    skippedSamples: S.sampler.skipped,
-    bridgeTimeouts: S.sampler.bridgeTimeouts,
-    bridgeErrors: S.bridgeErrors,
-    cycleWallMs: metric('suiteCycleWallMs'),
-    localWorkMs: metric('suiteLocalWorkMs'),
-    bridgeStatsWallMs: metric('suiteBridgeStatsWallMs'),
-    contextWallMs: metric('suiteContextWallMs'),
-    uiCostMs: metric('suiteUiCostMs'),
-    deepCallbackWorkTotalMs: metric('deepCallbackWorkTotalMs'),
-    deepCallbackWorkAvgMs: metric('deepCallbackWorkAvgMs'),
-    deep: deepPerformanceSnapshot(),
-    exportPerformance: { ...S.exportPerf },
-    note: 'Wall times include asynchronous waiting and are not CPU time. localWorkMs is synchronous userscript work outside bridge waits.'
-  };
-}
-
-function nearestSample(samples, t, mode = 'nearest') {
-  if (!samples.length || !Number.isFinite(t)) return null;
-  let best = null, bestD = Infinity;
-  for (const s of samples) {
-    const d = s.t - t;
-    if (mode === 'before' && d > 0) continue;
-    if (mode === 'after' && d < 0) continue;
-    const ad = Math.abs(d);
-    if (ad < bestD) { best = s; bestD = ad; }
-  }
-  return best;
-}
-
-function buildCorrelations(samples, events) {
-  const interesting = new Set([
-    'STREAM_ANOMALY','FREEZE_CHANGE',
-    'CODEC_CHANGE','INBOUND_RESOLUTION_CHANGE','COMPOSITOR_REGIME_CHANGE','SURFACE_CHANGE',
-    'CONTROL_ARMED','CONTROL_APPLIED','CONTROL_DISARMED','FPS_APPLIED','FPS_APPLY_FAILED','FPS_PREFERENCE_CHANGE','BITRATE_APPLIED','BITRATE_APPLY_FAILED','BITRATE_PREFERENCE_CHANGE','RESOLUTION_PROOF_STATUS','EXPERIMENT_PHASE_START','EXPERIMENT_PHASE_END','EXPERIMENT_CONFOUND','AUTO_PROFILE_INBOUND_CONFIRMED','CONTROL_NEXT_ATTACH_PREPARED','CONTROL_NEXT_ATTACH_FOUND','EARLY_RESOLUTION_OVERRIDE','CLIENT_RESOLUTION_CONFIRMED','MEASUREMENT_REANCHOR','VISIBILITY_CHANGE'
-  ]);
-  return events.filter(e => interesting.has(e.type)).map(e => ({
-    event: e,
-    before: compactTelemetry(nearestSample(samples, e.t - 1, 'before')),
-    at: compactTelemetry(nearestSample(samples, e.t, 'nearest')),
-    after: compactTelemetry(nearestSample(samples, e.t + 1, 'after'))
-  }));
-}
-
-function resolutionCounts(samples, key='inboundResolution') {
-  const m=new Map();
-  for (const s of samples) {
-    const r=s[key];
-    if (!r?.width || !r?.height) continue;
-    const k=`${r.width}x${r.height}`;
-    m.set(k,(m.get(k)||0)+1);
-  }
-  return [...m.entries()].sort((a,b)=>b[1]-a[1]).map(([resolution,count])=>({resolution,count}));
-}
-
-function buildExperimentStatistics(samples) {
-  const baselinePhase=S.experimentManager.phases.find(p=>p.kind==='BASELINE');
-  const baselineSamples=baselinePhase ? samples.filter(s=>s.experimentPhaseId===baselinePhase.id && s.phase==='STEADY_STATE' && s.measurementEligible !== false) : [];
-  const baselineStats=buildMetricStatistics(baselineSamples);
-  const avg=(obj,path)=>path.reduce((x,k)=>x?.[k],obj);
-  return S.experimentManager.phases.map(p=>{
-    const phaseSamplesRecorded=samples.filter(s=>s.experimentPhaseId===p.id && s.phase==='STEADY_STATE');
-    const phaseSamples=phaseSamplesRecorded.filter(s=>s.measurementEligible !== false);
-    const st=buildMetricStatistics(phaseSamplesRecorded);
-    const delta = p.kind==='BASELINE' ? null : {
-      presentedFpsAvg: round((avg(st,['streamPipeline','presentedFPS','avg']) ?? 0) - (avg(baselineStats,['streamPipeline','presentedFPS','avg']) ?? 0),3),
-      decodedFpsAvg: round((avg(st,['streamPipeline','decodedFPS','avg']) ?? 0) - (avg(baselineStats,['streamPipeline','decodedFPS','avg']) ?? 0),3),
-      bitrateMbpsAvg: round((avg(st,['network','bitrateMbps','avg']) ?? 0) - (avg(baselineStats,['network','bitrateMbps','avg']) ?? 0),3),
-      networkJitterMsAvg: round((avg(st,['network','networkJitterMs','avg']) ?? 0) - (avg(baselineStats,['network','networkJitterMs','avg']) ?? 0),3),
-      jitterBufferMsAvg: round((avg(st,['buffer','jitterBufferMs','avg']) ?? 0) - (avg(baselineStats,['buffer','jitterBufferMs','avg']) ?? 0),3),
-      decodeTimePerFrameMsAvg: round((avg(st,['decoder','decodeTimePerFrameMs','avg']) ?? 0) - (avg(baselineStats,['decoder','decodeTimePerFrameMs','avg']) ?? 0),3)
-    };
-    return {
-      ...p,
-      endAtSec:p.endAtSec ?? round(elapsed(),3),
-      steadySamples:phaseSamples.length,
-      steadySamplesRecorded:phaseSamplesRecorded.length,
-      steadySamplesEligible:phaseSamples.length,
-      observedInboundResolutions:resolutionCounts(phaseSamples,'inboundResolution'),
-      observedRenderedResolutions:resolutionCounts(phaseSamples,'renderedResolution'),
-      proofChain:{
-        requested:p.requestedResolution || null,
-        client:p.application?.client || null,
-        inbound:resolutionCounts(phaseSamples,'inboundResolution'),
-        rendered:resolutionCounts(phaseSamples,'renderedResolution')
-      },
-      statistics:st,
-      deltaVsFirstBaseline:delta,
-      proofFinal:p.proofFinal || (p.id===S.experimentManager.currentPhaseId && p.kind==='VIRTUAL_MONITOR' ? {...S.control.proof} : null)
-    };
-  });
-}
-
-function coreSampleView(s) {
-  return {
-    t:s.t,phase:s.phase,streamActive:s.streamActive,lab:s.lab,network:s.network,networkAuto:s.networkAuto,
-    mode:s.mode,controlState:s.controlState,measurementEligible:s.measurementEligible,measurementIneligibleReason:s.measurementIneligibleReason,
-    experimentPhaseId:s.experimentPhaseId,experimentPhaseLabel:s.experimentPhaseLabel,
-    resolutionPreferenceMode:s.resolutionPreferenceMode,resolutionRequested:s.resolutionRequested,resolutionProofStatus:s.resolutionProofStatus,
-    videoResolution:s.videoResolution,renderedResolution:s.renderedResolution,
-    intrinsicVideoCssPx:s.intrinsicVideoCssPx,elementBoxCssPx:s.elementBoxCssPx,rvfcMediaFramePx:s.rvfcMediaFramePx,
-    objectFit:s.objectFit,objectPosition:s.objectPosition,elementBoxToIntrinsicScaleX:s.elementBoxToIntrinsicScaleX,elementBoxToIntrinsicScaleY:s.elementBoxToIntrinsicScaleY,
-    viewport:s.viewport,orientation:s.orientation,videoReadyState:s.videoReadyState,
-    playbackQualityAvailable:s.playbackQualityAvailable,playbackTotalVideoFramesRaw:s.playbackTotalVideoFramesRaw,playbackDroppedVideoFramesRaw:s.playbackDroppedVideoFramesRaw,
-    playbackTotalVideoFramesDelta:s.playbackTotalVideoFramesDelta,playbackDroppedVideoFramesDelta:s.playbackDroppedVideoFramesDelta,playbackDropPercent:s.playbackDropPercent,
-    pcSource:s.pcSource,pcState:s.pcState,codec:s.codec,inboundResolution:s.inboundResolution,inboundFramePx:s.inboundFramePx,receiverTrackSettings:s.receiverTrackSettings,
-    rtcFPS:s.rtcFPS,receivedFPS:s.receivedFPS,decodedFPS:s.decodedFPS,bitrateMbps:s.bitrateMbps,
-    bitrateSource:s.bitrateSource,bitrateScope:s.bitrateScope,bitrateConfidence:s.bitrateConfidence,
-    networkJitterMs:s.networkJitterMs,rttMs:s.rttMs,availableIncomingMbps:s.availableIncomingMbps,
-    packetsReceivedDelta:s.packetsReceivedDelta,packetsLostDelta:s.packetsLostDelta,packetsLostRaw:s.packetsLostRaw,packetLossPercent:s.packetLossPercent,
-    packetsDiscardedRaw:s.packetsDiscardedRaw,jitterBufferMs:s.jitterBufferMs,jitterBufferTargetMs:s.jitterBufferTargetMs,jitterBufferMinimumMs:s.jitterBufferMinimumMs,
-    framesReceivedRaw:s.framesReceivedRaw,framesReceivedDelta:s.framesReceivedDelta,framesDecodedRaw:s.framesDecodedRaw,framesDecodedDelta:s.framesDecodedDelta,framesDroppedRaw:s.framesDroppedRaw,framesDroppedDelta:s.framesDroppedDelta,
-    framesRenderedRaw:s.framesRenderedRaw,framesRenderedDelta:s.framesRenderedDelta,renderedFPSFromStats:s.renderedFPSFromStats,
-    decodeTimePerFrameMs:s.decodeTimePerFrameMs,processingDelayPerFrameMs:s.processingDelayPerFrameMs,
-    renderInterFrameMeanMs:s.renderInterFrameMeanMs,renderInterFrameStdDevMs:s.renderInterFrameStdDevMs,
-    qpSumRaw:s.qpSumRaw,qpSumDelta:s.qpSumDelta,qpPerDecodedFrame:s.qpPerDecodedFrame,corruptionMeasurementsRaw:s.corruptionMeasurementsRaw,corruptionMeasurementsDelta:s.corruptionMeasurementsDelta,corruptionProbabilityMean:s.corruptionProbabilityMean,corruptionProbabilityStdDev:s.corruptionProbabilityStdDev,
-    nackCountRaw:s.nackCountRaw,nackCountDelta:s.nackCountDelta,pliCountRaw:s.pliCountRaw,pliCountDelta:s.pliCountDelta,firCountRaw:s.firCountRaw,firCountDelta:s.firCountDelta,
-    retransmittedPacketsReceivedRaw:s.retransmittedPacketsReceivedRaw,retransmittedPacketsReceivedDelta:s.retransmittedPacketsReceivedDelta,
-    retransmittedBytesReceivedRaw:s.retransmittedBytesReceivedRaw,retransmittedBytesReceivedDelta:s.retransmittedBytesReceivedDelta,
-    framesAssembledFromMultiplePacketsRaw:s.framesAssembledFromMultiplePacketsRaw,framesAssembledFromMultiplePacketsDelta:s.framesAssembledFromMultiplePacketsDelta,
-    assemblyTimePerMultiPacketFrameMs:s.assemblyTimePerMultiPacketFrameMs,pauseCountRaw:s.pauseCountRaw,pauseCountDelta:s.pauseCountDelta,totalPausesDuration:s.totalPausesDuration,
-    freezeCount:s.freezeCount,freezeDelta:s.freezeDelta,totalFreezesDurationRaw:s.totalFreezesDurationRaw,freezeDurationDeltaMs:s.freezeDurationDeltaMs,
-    controlRequestedFps:s.controlRequestedFps,clientTargetFps:s.targetFps,clientTargetFpsSource:s.targetFpsSource,
-    requestedBitrateMbps:s.targetBitrateMbps,bitrateAuto:s.bitrateAuto,resolutionMode:s.resolutionMode,receiverHints:s.receiverHints,
-    suiteCycleWallMs:s.suiteCycleWallMs,suiteLocalWorkMs:s.suiteLocalWorkMs,suiteBridgeStatsWallMs:s.suiteBridgeStatsWallMs,
-    suiteContextWallMs:s.suiteContextWallMs,suiteUiCostMs:s.suiteUiCostMs
-  };
-}
-
-function deepSampleView(s) {
-  return {
-    t:s.t,phase:s.phase,experimentPhaseId:s.experimentPhaseId,measurementEligible:s.measurementEligible,
-    presentedFPS:s.presentedFPS,presentedFramesDelta:s.presentedFramesDelta,callbackHz:s.callbackHz,callbackCountDelta:s.callbackCountDelta,
-    callbackIntervalMeanMs:s.callbackIntervalMeanMs,callbackJitterMs:s.callbackJitterMs,callbackIntervalMinMs:s.callbackIntervalMinMs,
-    callbackIntervalMaxMs:s.callbackIntervalMaxMs,framesPerCallback:s.framesPerCallback,multiFrameCallbacks:s.multiFrameCallbacks,
-    processingDurationMs:s.processingDurationMs,callbackLatenessMs:s.callbackLatenessMs,compositorRegimeHz:s.compositorRegimeHz,
-    callbackWorkCountDelta:s.deepCallbackWorkCountDelta,callbackWorkTotalMs:s.deepCallbackWorkTotalMs,callbackWorkAvgMs:s.deepCallbackWorkAvgMs
+    t:s.t,phase:s.phase,streamActive:s.streamActive,measurementEligible:s.measurementEligible,measurementIneligibleReason:s.measurementIneligibleReason,
+    mode:s.mode,controlState:s.controlState,resolutionRequested:s.resolutionRequested,resolutionProofStatus:s.resolutionProofStatus,
+    videoResolution:s.videoResolution,inboundResolution:s.inboundResolution,codec:s.codec,pcState:s.pcState,
+    rtcFPS:s.rtcFPS,receivedFPS:s.receivedFPS,decodedFPS:s.decodedFPS,bitrateMbps:s.bitrateMbps,bitrateSource:s.bitrateSource,bitrateConfidence:s.bitrateConfidence,
+    rttMs:s.rttMs,networkJitterMs:s.networkJitterMs,packetLossPercent:s.packetLossPercent,availableIncomingMbps:s.availableIncomingMbps,
+    framesDroppedDelta:s.framesDroppedDelta,freezeDelta:s.freezeDelta,freezeDurationDeltaMs:s.freezeDurationDeltaMs,decodeTimePerFrameMs:s.decodeTimePerFrameMs,
+    controlRequestedFps:s.controlRequestedFps,targetFps:s.targetFps,requestedBitrateMbps:s.targetBitrateMbps,bitrateAuto:s.bitrateAuto,
+    suiteLocalWorkMs:s.suiteLocalWorkMs,suiteCycleWallMs:s.suiteCycleWallMs,suiteBridgeStatsWallMs:s.suiteBridgeStatsWallMs,suiteContextWallMs:s.suiteContextWallMs,suiteUiCostMs:s.suiteUiCostMs
   };
 }
 
 function buildCoreStatistics(samples) {
-  const eligible=samples.filter(s=>s.measurementEligible!==false);
-  const active=eligible.filter(s=>s.streamActive||Number.isFinite(s.bitrateMbps));
-  const col=key=>active.map(s=>s[key]).filter(Number.isFinite);
-  const bitrateSources={};
-  for (const s of active) if (s.bitrateSource) bitrateSources[s.bitrateSource]=(bitrateSources[s.bitrateSource]||0)+1;
+  const active=samples.filter(s=>s.measurementEligible!==false&&(s.streamActive||Number.isFinite(s.bitrateMbps)));
+  const col=k=>active.map(s=>s[k]).filter(Number.isFinite);
   return {
-    sampleCount:samples.length,eligibleSamples:eligible.length,activeSamples:active.length,approxActiveSeconds:active.length*SAMPLE_MS/1000,
-    stream:{rtcFPS:stats(col('rtcFPS')),receivedFPS:stats(col('receivedFPS')),decodedFPS:stats(col('decodedFPS'))},
-    network:{bitrateMbps:stats(col('bitrateMbps')),bitrateSources,jitterMs:stats(col('networkJitterMs')),rttMs:stats(col('rttMs')),packetLossPercent:stats(col('packetLossPercent'))},
+    sampleCount:samples.length,activeSamples:active.length,
+    stream:{rtcFPS:stats(col('rtcFPS')),decodedFPS:stats(col('decodedFPS'))},
+    network:{bitrateMbps:stats(col('bitrateMbps')),jitterMs:stats(col('networkJitterMs')),rttMs:stats(col('rttMs')),packetLossPercent:stats(col('packetLossPercent'))},
     decoder:{decodeTimePerFrameMs:stats(col('decodeTimePerFrameMs')),framesDroppedDeltaTotal:active.reduce((a,x)=>a+(Number.isFinite(x.framesDroppedDelta)?x.framesDroppedDelta:0),0),freezeDeltaTotal:active.reduce((a,x)=>a+(Number.isFinite(x.freezeDelta)?x.freezeDelta:0),0)},
-    suite:{cycleWallMs:stats(col('suiteCycleWallMs')),localWorkMs:stats(col('suiteLocalWorkMs')),bridgeStatsWallMs:stats(col('suiteBridgeStatsWallMs')),contextWallMs:stats(col('suiteContextWallMs')),uiCostMs:stats(col('suiteUiCostMs'))}
+    suite:{localWorkMs:stats(col('suiteLocalWorkMs')),cycleWallMs:stats(col('suiteCycleWallMs')),bridgeStatsWallMs:stats(col('suiteBridgeStatsWallMs')),contextWallMs:stats(col('suiteContextWallMs')),uiCostMs:stats(col('suiteUiCostMs'))}
   };
 }
 
-function buildDeepStatistics(samples) {
-  const deep=samples.filter(s=>s.deepAnalyzerEnabled===true && s.measurementEligible!==false);
-  const col=key=>deep.map(s=>s[key]).filter(Number.isFinite);
+function minimalCapabilityView() {
   return {
-    sampleCount:deep.length,
-    presentedFPS:stats(col('presentedFPS')),callbackHz:stats(col('callbackHz')),framesPerCallback:stats(col('framesPerCallback')),
-    callbackIntervalMeanMs:stats(col('callbackIntervalMeanMs')),callbackJitterMs:stats(col('callbackJitterMs')),
-    processingDurationMs:stats(col('processingDurationMs')),callbackLatenessMs:stats(col('callbackLatenessMs')),
-    callbackWorkTotalMs:stats(col('deepCallbackWorkTotalMs')),callbackWorkAvgMs:stats(col('deepCallbackWorkAvgMs'))
+    webrtc:{rtcPeerConnection:CAP.webrtc.rtcPeerConnection,rtcStatsReport:CAP.webrtc.rtcStatsReport},
+    input:{pointerLock:CAP.input.pointerLock,keyboardLock:CAP.input.keyboardLock,touch:CAP.input.touch},
+    display:{fullscreen:CAP.display.fullscreen,dynamicRangeHigh:CAP.display.dynamicRangeHigh}
   };
 }
 
-function buildImageTelemetryStatistics(samples) {
-  const eligible=samples.filter(s=>s.measurementEligible!==false);
-  const active=eligible.filter(s=>s.streamActive||Number.isFinite(s.bitrateMbps));
-  const col=key=>active.map(s=>s[key]).filter(Number.isFinite);
-  const sum=key=>active.reduce((a,s)=>a+(Number.isFinite(s[key])?s[key]:0),0);
-  const observed=key=>active.reduce((n,s)=>n+(s[key]!==null&&s[key]!==undefined?1:0),0);
+function minimalClientContext() {
+  const c=S.contextLatest || {};
   return {
-    playback:{
-      apiAvailable:CAP.video.getVideoPlaybackQuality,
-      samplesWithSignal:observed('playbackTotalVideoFramesRaw'),
-      totalFramesDelta:sum('playbackTotalVideoFramesDelta'),
-      droppedFramesDelta:sum('playbackDroppedVideoFramesDelta'),
-      dropPercent:stats(col('playbackDropPercent'))
-    },
-    render:{
-      samplesWithFramesRendered:observed('framesRenderedRaw'),
-      renderedFPSFromStats:stats(col('renderedFPSFromStats')),
-      interFrameMeanMs:stats(col('renderInterFrameMeanMs')),
-      interFrameStdDevMs:stats(col('renderInterFrameStdDevMs'))
-    },
-    compression:{
-      samplesWithQpSum:observed('qpSumRaw'),
-      qpPerDecodedFrame:stats(col('qpPerDecodedFrame')),
-      note:'Codec/context-relative trend only; not a universal visual-quality score.'
-    },
-    recovery:{
-      samplesWithNack:observed('nackCountRaw'),
-      nackDeltaTotal:sum('nackCountDelta'),
-      pliDeltaTotal:sum('pliCountDelta'),
-      firDeltaTotal:sum('firCountDelta'),
-      retransmittedPacketsDeltaTotal:sum('retransmittedPacketsReceivedDelta'),
-      retransmittedBytesDeltaTotal:sum('retransmittedBytesReceivedDelta')
-    },
-    receiverPipeline:{
-      processingDelayPerFrameMs:stats(col('processingDelayPerFrameMs')),
-      assemblyTimePerMultiPacketFrameMs:stats(col('assemblyTimePerMultiPacketFrameMs')),
-      pauseDeltaTotal:sum('pauseCountDelta')
-    },
-    surface:{
-      elementBoxToIntrinsicScaleX:stats(col('elementBoxToIntrinsicScaleX')),
-      elementBoxToIntrinsicScaleY:stats(col('elementBoxToIntrinsicScaleY')),
-      latestObjectFit:active.length ? active[active.length-1].objectFit ?? null : null,
-      latestObjectPosition:active.length ? active[active.length-1].objectPosition ?? null : null
-    }
-  };
-}
-
-function imageTelemetryAvailability(samples) {
-  const keys=[
-    'playbackTotalVideoFramesRaw','framesRenderedRaw','renderInterFrameMeanMs','qpSumRaw','nackCountRaw','pliCountRaw','firCountRaw',
-    'processingDelayPerFrameMs','retransmittedPacketsReceivedRaw','framesAssembledFromMultiplePacketsRaw','corruptionMeasurementsRaw','corruptionProbabilityMean'
-  ];
-  const out={};
-  for (const key of keys) out[key]=samples.some(s=>s[key]!==null&&s[key]!==undefined);
-  out.receiverTrackSettings=!!S.contextLatest?.receiverTrackSettings;
-  out.objectFit=samples.some(s=>typeof s.objectFit==='string'&&s.objectFit.length>0);
-  return out;
-}
-
-// -----------------------------------------------------------------------------
-// IMAGE LAB FEATURE LAYER 0.1 - EXPORT-ONLY DERIVATION (RC17)
-// Derived quality features are computed only when the user exports the log.
-// The 1 Hz gameplay sampler performs no feature-model pass, no pixel capture,
-// no canvas readback, no ML and no additional RTC getStats() call.
-// -----------------------------------------------------------------------------
-function buildImageFeatureLayer(samples) {
-  const started=now();
-  const eligible=samples.filter(s=>s.measurementEligible!==false && (s.streamActive || Number.isFinite(s.bitrateMbps)));
-  const finite=(v)=>Number.isFinite(v)?v:null;
-  const ratio=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)&&a>=0&&b>0?a/b:null;
-  const rows=[];
-
-  for (const s of eligible) {
-    const res=s.inboundResolution || s.inboundFramePx || null;
-    const width=Number(res?.width),height=Number(res?.height);
-    const pixels=width>0&&height>0 ? width*height : null;
-    const fps=Number.isFinite(s.decodedFPS)&&s.decodedFPS>0 ? s.decodedFPS : (Number.isFinite(s.rtcFPS)&&s.rtcFPS>0?s.rtcFPS:null);
-    const frameBudgetMs=Number.isFinite(fps)&&fps>0 ? 1000/fps : null;
-    const bitrateBps=Number.isFinite(s.bitrateMbps)&&s.bitrateMbps>=0 ? s.bitrateMbps*1e6 : null;
-    const bitsPerPixelFrame=Number.isFinite(bitrateBps)&&pixels>0&&fps>0 ? bitrateBps/(pixels*fps) : null;
-    const directVideoDensity=s.bitrateScope==='VIDEO' && s.bitrateConfidence==='DIRECT_COUNTER' ? bitsPerPixelFrame : null;
-    const retransPacketRatio=ratio(s.retransmittedPacketsReceivedDelta,s.packetsReceivedDelta);
-    const frameDropRatio=ratio(s.framesDroppedDelta,s.framesReceivedDelta);
-    const nackPerK=Number.isFinite(s.nackCountDelta)&&Number.isFinite(s.framesDecodedDelta)&&s.framesDecodedDelta>0 ? s.nackCountDelta/s.framesDecodedDelta*1000 : null;
-    const pliPerK=Number.isFinite(s.pliCountDelta)&&Number.isFinite(s.framesDecodedDelta)&&s.framesDecodedDelta>0 ? s.pliCountDelta/s.framesDecodedDelta*1000 : null;
-    const firPerK=Number.isFinite(s.firCountDelta)&&Number.isFinite(s.framesDecodedDelta)&&s.framesDecodedDelta>0 ? s.firCountDelta/s.framesDecodedDelta*1000 : null;
-    const decodeBudgetRatio=ratio(s.decodeTimePerFrameMs,frameBudgetMs);
-    const processingBudgetRatio=ratio(s.processingDelayPerFrameMs,frameBudgetMs);
-    const jitterExcess=Number.isFinite(s.jitterBufferMs)&&Number.isFinite(s.jitterBufferMinimumMs) ? Math.max(0,s.jitterBufferMs-s.jitterBufferMinimumMs) : null;
-    const jitterTargetExcess=Number.isFinite(s.jitterBufferTargetMs)&&Number.isFinite(s.jitterBufferMinimumMs) ? Math.max(0,s.jitterBufferTargetMs-s.jitterBufferMinimumMs) : null;
-    const box=s.elementBoxCssPx || s.renderedResolution || null;
-    const boxArea=Number(box?.width)>0&&Number(box?.height)>0 ? Number(box.width)*Number(box.height) : null;
-    const surfaceAreaRatio=Number.isFinite(boxArea)&&pixels>0 ? boxArea/pixels : null;
-
-    rows.push({
-      t:s.t,phase:s.phase,codec:s.codec||null,inboundResolution:res,
-      decodedFPS:finite(s.decodedFPS),frameBudgetMs:round(frameBudgetMs,4),
-      bitrateMbps:finite(s.bitrateMbps),bitrateScope:s.bitrateScope||null,bitrateConfidence:s.bitrateConfidence||null,
-      observedBitsPerPixelFrame:round(bitsPerPixelFrame,8),directVideoBitsPerPixelFrame:round(directVideoDensity,8),
-      retransmittedPacketRatio:round(retransPacketRatio,6),frameDropRatio:round(frameDropRatio,6),
-      nackPerThousandDecodedFrames:round(nackPerK,4),pliPerThousandDecodedFrames:round(pliPerK,4),firPerThousandDecodedFrames:round(firPerK,4),
-      decodeBudgetRatio:round(decodeBudgetRatio,6),processingBudgetRatio:round(processingBudgetRatio,6),
-      jitterBufferExcessMs:round(jitterExcess,4),jitterBufferTargetExcessMs:round(jitterTargetExcess,4),
-      surfaceScaleX:finite(s.elementBoxToIntrinsicScaleX),surfaceScaleY:finite(s.elementBoxToIntrinsicScaleY),surfaceAreaRatio:round(surfaceAreaRatio,6),
-      freezeDelta:finite(s.freezeDelta),freezeDurationDeltaMs:finite(s.freezeDurationDeltaMs),
-      corruptionMeasurementsDelta:finite(s.corruptionMeasurementsDelta),corruptionProbabilityMean:finite(s.corruptionProbabilityMean),corruptionProbabilityStdDev:finite(s.corruptionProbabilityStdDev)
-    });
-  }
-
-  const col=key=>rows.map(r=>r[key]).filter(Number.isFinite);
-  return {
-    schemaVersion:1,
-    stage:'FEATURE_LAYER_0.1',
-    computation:'EXPORT_ONLY',
-    runtimeFeaturePass:false,
-    runtimePixelAnalysis:false,
-    runtimeMachineLearning:false,
-    extraGetStatsCallsPerSample:0,
-    sampleCount:rows.length,
-    buildWallMs:round(now()-started,3),
-    principles:{
-      metricIsNotDiagnosis:true,
-      bitrateIsContextual:true,
-      requestedNotEqualAchieved:true,
-      sameLabBrowserCodecBaselineRequiredForFutureThresholds:true
-    },
-    semantics:{
-      observedBitsPerPixelFrame:'Observed bitrate divided by decoded/RTC frame rate and inbound pixels; scope/confidence must be read with the value.',
-      directVideoBitsPerPixelFrame:'Same density only when bitrate source is a direct VIDEO counter; preferred coding-density feature.',
-      retransmittedPacketRatio:'delta retransmittedPacketsReceived / delta packetsReceived; repair-load signal, not a standalone network diagnosis.',
-      frameDropRatio:'delta framesDropped / delta framesReceived.',
-      decodeBudgetRatio:'decode ms per frame / frame budget at observed FPS.',
-      processingBudgetRatio:'receiver totalProcessingDelay per decoded frame / frame budget at observed FPS.',
-      jitterBufferExcessMs:'observed jitter-buffer delay per emitted frame minus minimum delay.',
-      corruptionProbabilityMean:'delta totalCorruptionProbability / delta corruptionMeasurements when exposed by the negotiated WebRTC path.'
-    },
-    statistics:{
-      observedBitsPerPixelFrame:stats(col('observedBitsPerPixelFrame')),
-      directVideoBitsPerPixelFrame:stats(col('directVideoBitsPerPixelFrame')),
-      retransmittedPacketRatio:stats(col('retransmittedPacketRatio')),
-      frameDropRatio:stats(col('frameDropRatio')),
-      nackPerThousandDecodedFrames:stats(col('nackPerThousandDecodedFrames')),
-      decodeBudgetRatio:stats(col('decodeBudgetRatio')),
-      processingBudgetRatio:stats(col('processingBudgetRatio')),
-      jitterBufferExcessMs:stats(col('jitterBufferExcessMs')),
-      surfaceAreaRatio:stats(col('surfaceAreaRatio')),
-      corruptionProbabilityMean:stats(col('corruptionProbabilityMean'))
-    },
-    samples:rows
-  };
-}
-
-function buildLongSessionStatistics() {
-  const cps=S.longSession.checkpoints.toArray();
-  const nums=key=>cps.map(c=>c[key]).filter(Number.isFinite);
-  const memUsed=cps.map(c=>c.memory?.legacy?.usedJSHeapSize).filter(Number.isFinite);
-  const uaMem=cps.map(c=>c.memory?.userAgentSpecific?.bytes).filter(Number.isFinite);
-  const storageUsage=cps.map(c=>c.storage?.usageBytes).filter(Number.isFinite);
-  const pressureCounts={};
-  for (const c of cps) {
-    const state=c.computePressure?.state;
-    if (state) pressureCounts[state]=(pressureCounts[state]||0)+1;
-  }
-  const first=cps[0]||null,last=cps[cps.length-1]||null;
-  const firstLogical=first?.logicalElapsedSec ?? first?.persistence?.logicalElapsedSec ?? null;
-  const lastLogical=last?.logicalElapsedSec ?? last?.persistence?.logicalElapsedSec ?? null;
-  const retainedHours=Number.isFinite(firstLogical) && Number.isFinite(lastLogical) && lastLogical>=firstLogical
-    ? (lastLogical-firstLogical)/3600
-    : cps.length*LONG_SESSION_CHECKPOINT_MS/3600000;
-  return {
-    checkpointCount:cps.length,
-    retainedHours:round(retainedHours,3),
-    firstAtSec:first?.t ?? null,
-    lastAtSec:last?.t ?? null,
-    firstLogicalElapsedSec:firstLogical,
-    lastLogicalElapsedSec:lastLogical,
-    recoveredCheckpointCount:S.longSession.persistence.recoveredCheckpointCount,
-    decodedFPS:stats(nums('decodedFPS')),
-    rttMs:stats(nums('rttMs')),
-    decodeTimePerFrameMs:stats(nums('decodeTimePerFrameMs')),
-    processingDelayPerFrameMs:stats(nums('processingDelayPerFrameMs')),
-    suiteLocalWorkMs:stats(nums('suiteLocalWorkMs')),
-    jsHeapUsedBytes:stats(memUsed),
-    userAgentSpecificMemoryBytes:stats(uaMem),
-    storageUsageBytes:stats(storageUsage),
-    pressureStateCounts:pressureCounts,
-    checkpointErrors:S.longSession.checkpointErrors,
-    persistenceWriteErrors:S.longSession.persistence.writeErrors,
-    persistenceReadErrors:S.longSession.persistence.readErrors
+    sessionHandler:c.sessionHandler ? {videoCodec:c.sessionHandler.videoCodec??null,av1SupportedStatus:c.sessionHandler.av1SupportedStatus??null,isHDRSupported:c.sessionHandler.isHDRSupported??null,isHDRSupportedByServer:c.sessionHandler.isHDRSupportedByServer??null} : null,
+    menu:c.menu ? {fpsMaxRate:c.menu.fpsMaxRate??null,fpsRate:c.menu.fpsRate??null} : null,
+    peerConnection:c.peerConnection ? {source:c.peerConnection.source??null,connectionState:c.peerConnection.connectionState??null,iceConnectionState:c.peerConnection.iceConnectionState??null,signalingState:c.peerConnection.signalingState??null} : null,
+    storage:c.storage ? {fpsRateValue:c.storage.fpsRateValue??null,bitrateValue:c.storage.bitrateValue??null,bitrateValueForAV1:c.storage.bitrateValueForAV1??null} : null
   };
 }
 
 function buildExport() {
   const samples=S.samples.toArray();
-  const events=S.events.toArray();
-  const importantEvents=S.importantEvents.toArray();
   const control=controlSnapshot();
-  const latest=samples.length ? samples[samples.length-1] : null;
-  const experimentStatistics=buildExperimentStatistics(samples);
-  const networkAuto=detectNetworkAuto();
-  const coreSamples=samples.map(coreSampleView);
-  const deepSamples=samples.filter(s=>s.deepAnalyzerEnabled===true).map(deepSampleView);
-  const coreStats=buildCoreStatistics(samples);
-  const deepStats=buildDeepStatistics(samples);
-  const imageStats=buildImageTelemetryStatistics(samples);
-  const imageAvailability=imageTelemetryAvailability(samples);
-  const imageFeatureLayer=buildImageFeatureLayer(samples);
-  const guard=observerHealth(samples);
-  const longSessionCheckpoints=S.longSession.checkpoints.toArray();
-  const longSessionStats=buildLongSessionStatistics();
-
   return {
-    controlSuite:{
-      name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
-      pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
-      schemaVersion:2,
-      status:'V0.8.1_RC17__IMAGE_LAB_FEATURE_LAYER_0_1__STATIC_CANDIDATE__NOT_CANONICAL'
-    },
+    controlSuite:{name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,schemaVersion:3,status:'V0.8.1_RC18__PLAY_FIRST_PRUNING_CANDIDATE__NOT_CANONICAL'},
     exportedAt:new Date().toISOString(),
-    environment:ENV,
-    capabilities:CAP,
-    inputCompatibility:inputProbeSnapshot(),
+    environment:{browser:ENV.browser,engine:ENV.engine,likelyPlatform:ENV.likelyPlatform,deviceClass:ENV.deviceClass,hardwareConcurrency:ENV.hardwareConcurrency,deviceMemory:ENV.deviceMemory,maxTouchPoints:ENV.maxTouchPoints},
+    capabilities:minimalCapabilityView(),
+    profile:currentPreferenceSnapshot(),
+    control:{requested:{resolutionMode:control.preferenceMode,resolution:control.preferenceTarget,fps:control.fpsRequested,bitrateAuto:control.bitrateAuto,bitrateMbps:control.bitrateRequestedMbps},achieved:{inboundResolution:S.lastInboundResolution,rtcFPS:S.latestSample?.rtcFPS??null,decodedFPS:S.latestSample?.decodedFPS??null,bitrateMbps:S.latestSample?.bitrateMbps??null,codec:S.lastCodec},state:control},
+    clientContext:minimalClientContext(),
     mouseChordCompatibilityFix:mouseChordFixSnapshot(),
     immersiveGameMode:immersiveSnapshot(),
-    profile:currentPreferenceSnapshot(),
-    control:{
-      requested:{
-        resolutionMode:control.preferenceMode,
-        resolution:control.preferenceTarget,
-        fps:control.fpsRequested,
-        bitrateAuto:control.bitrateAuto,
-        bitrateMbps:control.bitrateRequestedMbps
-      },
-      nativeClientEvidence:{
-        resolution:control.application?.client || null,
-        fpsApplication:control.fpsApplication,
-        bitrateApplication:control.bitrateApplication,
-        nativeBitrateEvidence:control.nativeBitrateEvidence,
-        clientContext:S.contextLatest || null
-      },
-      achieved:{
-        resolutionProof:control.proof,
-        latestInboundResolution:latest?.inboundResolution || null,
-        latestRenderedResolution:latest?.renderedResolution || null,
-        latestRtcFPS:latest?.rtcFPS ?? null,
-        latestDecodedFPS:latest?.decodedFPS ?? null,
-        latestBitrateMbps:latest?.bitrateMbps ?? null,
-        codec:latest?.codec || S.lastCodec || null
-      },
-      state:control
-    },
-    coreTelemetry:{
-      enabled:true,
-      sampleIntervalMs:SAMPLE_MS,
-      semantics:{
-        rtcFPS:'RTCInboundRtpStreamStats.framesPerSecond',
-        receivedFPS:'delta framesReceived / RTC stats time',
-        decodedFPS:'delta framesDecoded / RTC stats time',
-        bitrateMbps:'direct sum of inbound-video bytes when valid; transport candidate-pair bytes only as explicitly labeled fallback when the Chromium/AV1 video counter stalls',
-        requestedVsClientVsAchieved:'kept as separate fields; requested is never proof of achieved'
-      },
-      statistics:coreStats,
-      samples:coreSamples
-    },
-    deepAnalyzer:{
-      enabled:S.deep.enabled,
-      onDemand:true,
-      rvfcContinuousWhenOff:false,
-      semantics:{
-        presentedFPS:'available only while DEEP is enabled; derived from requestVideoFrameCallback metadata.presentedFrames',
-        callbackHz:'requestVideoFrameCallback callbacks per sample time',
-        callbackIntervalMeanMs:'callback interval; NOT decoded-frame interval',
-        callbackWorkMs:'synchronous userscript work measured inside each DEEP rVFC callback'
-      },
-      performance:deepPerformanceSnapshot(),
-      compositorSessionStats:compositorSessionStats(),
-      statistics:deepStats,
-      samples:deepSamples
-    },
-    imageTelemetry:{
-      schemaVersion:1,
-      observationalOnly:true,
-      pixelCapture:false,
-      canvasLoop:false,
-      extraGetStatsCallsPerSample:0,
-      playbackQualityAPI:CAP.video.getVideoPlaybackQuality,
-      availability:imageAvailability,
-      receiverTrackSettings:S.contextLatest?.receiverTrackSettings || null,
-      surfaceSemantics:{
-        legacyRenderedResolutionMeaning:'CSS element box from getBoundingClientRect; preserved for compatibility',
-        explicitFields:['inboundFramePx','intrinsicVideoCssPx','elementBoxCssPx','rvfcMediaFramePx','objectFit','objectPosition']
-      },
-      semantics:{
-        receiverTrackSettingsFrameRate:'observational only; excluded from cadence and CLIENT_STATE_CHANGE fingerprint because Chromium/Android can report implausible values',
-        qpPerDecodedFrame:'delta qpSum / delta framesDecoded; codec/context-relative trend only',
-        renderedFPSFromStats:'delta RTCInboundRtpStreamStats.framesRendered / stats time when exposed',
-        playbackDropPercent:'delta droppedVideoFrames / delta totalVideoFrames; corroborating signal pending live WebRTC validation',
-        processingDelayPerFrameMs:'delta totalProcessingDelay / delta framesDecoded when exposed',
-        corruptionProbabilityMean:'delta totalCorruptionProbability / delta corruptionMeasurements when the negotiated Chromium/WebRTC path exposes corruption scoring'
-      },
-      statistics:imageStats
-    },
-    imageFeatureLayer,
-    longSessionTelemetry:{
-      schemaVersion:2,
-      observationalOnly:true,
-      crashSafePersistence:true,
-      checkpointIntervalMs:LONG_SESSION_CHECKPOINT_MS,
-      maxCheckpoints:MAX_LONG_SESSION_CHECKPOINTS,
-      maxRetentionHoursAtPeriodicCadence:round(MAX_LONG_SESSION_CHECKPOINTS*LONG_SESSION_CHECKPOINT_MS/3600000,3),
-      retentionSemantics:'720 rows equals ~12 h at the periodic 1-minute cadence; extra lifecycle checkpoints can reduce wall-clock coverage if the page is repeatedly hidden/reloaded.',
-      rationale:'Preserve a bounded low-frequency history across multi-hour sessions and recover the timeline after same-origin reload/crash while the 1 Hz CORE ring remains capped at ~1 hour.',
-      memorySemantics:{
-        performanceMemory:'Chromium-specific JS heap signal when exposed; not total process/device RAM.',
-        userAgentSpecificMemory:'used only when API exists and crossOriginIsolated is true; capability-aware.',
-        storageEstimate:'origin storage quota/usage estimate; NOT RAM and not a complete browser-cache measurement.'
-      },
-      pressureSemantics:'Compute Pressure is a high-level CPU pressure state when exposed; it is not a direct temperature sensor.',
-      longTaskSemantics:'Performance Long Tasks >=50 ms when supported; cumulative counters are checkpointed, not every entry.',
-      persistence:longSessionPersistenceSnapshot(),
-      recoverySemantics:'Checkpoint rows are asynchronously committed to origin-scoped IndexedDB. Periodic checkpoints are supplemented by pagehide/document-hidden snapshots; a hard crash can still lose at most the interval since the most recent successful write.',
-      statistics:longSessionStats,
-      checkpoints:longSessionCheckpoints
-    },
-    latencyLab:{
-      capabilityAware:true,
-      enabled:false,
-      jitterBufferTargetAPI:CAP.webrtc.jitterBufferTarget,
-      playoutDelayHintAPI:CAP.webrtc.playoutDelayHint,
-      receiverHints:S.contextLatest?.receiverHints || null,
-      activeModification:false
-    },
-    performanceGuard:{
-      version:2,
-      core:{
-        attemptedSamples:S.sampler.samplesAttempted,
-        retainedSamples:samples.length,
-        skippedSamples:S.sampler.skipped,
-        bridgeTimeouts:S.sampler.bridgeTimeouts,
-        bridgeErrors:S.bridgeErrors,
-        cycleWallMs:guard.cycleWallMs,
-        localWorkMs:guard.localWorkMs,
-        bridgeStatsWallMs:guard.bridgeStatsWallMs,
-        contextWallMs:guard.contextWallMs,
-        uiCostMs:guard.uiCostMs
-      },
-      deep:deepPerformanceSnapshot(),
-      export:{...S.exportPerf},
-      note:'CORE localWorkMs excludes asynchronous waits. DEEP callback cost is measured separately inside the on-demand rVFC callback. Image Feature Layer 0.1 derives features only during export and adds no gameplay-time feature pass.'
-    },
-    experiments:{
-      lab:S.lab,
-      network:{label:S.network,auto:networkAuto},
-      mode:S.mode,
-      recording:S.recording,
-      measurementEligibility:{
-        documentHidden:!!document.hidden,videoPaused:!!S.video?.paused,resumeGraceSamples:S.measurement.resumeGraceSamples,
-        lastReanchorReason:S.measurement.lastReanchorReason,lastReanchorAtSec:S.measurement.lastReanchorAtSec
-      },
-      lifecycle:{
-        sessionStartedAt:S.sessionStartDate?.toISOString()||null,durationSeconds:round(elapsed(),3),
-        firstVideoAtSec:S.firstVideoAt,firstMetadataAtSec:S.firstMetadataAt,firstPlayingAtSec:S.firstPlayingAt,
-        firstFrameAtSec:S.firstFrameAt,lastFrameAtSec:S.lastFrameAt
-      },
-      phases:experimentStatistics,
-      correlations:buildCorrelations(samples,importantEvents.length ? importantEvents : events)
-    },
-    instrumentation:{
-      rtcNativeHooks:[],
-      pageMethodOverrides:S.control.state==='ACTIVE' && (S.control.application?.patch?.patched||S.control.application?.patched) ? ['StreamDeviceContext.getSafeResolution','SessionHandler.getWindowResolution'] : [],
-      exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
-      controlModel:'PERSISTENT_AUTO_APPLY',
-      telemetryIntegrityModel:'RC17_IMAGE_FEATURE_LAYER_EXPORT_ONLY_PLUS_RC16_IMMERSIVE_V2_PLUS_AUTO_INTEGRATED_RC15_CHORD_FIX',
-      legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
-      longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls',
-      telemetryIntegrity:{
-        clientStateFingerprintExcludesReceiverTrackFrameRate:true,
-        clientStateChanges:S.contextTelemetry.changes,
-        suppressedFrameRateOnlyStateChanges:S.contextTelemetry.suppressedFrameRateOnly,
-        receiverTrackFrameRateSamples:S.contextTelemetry.frameRateSamples,
-        implausibleReceiverTrackFrameRateSamples:S.contextTelemetry.implausibleFrameRateSamples,
-        lastObservedReceiverTrackFrameRate:S.contextTelemetry.lastObservedFrameRate,
-        protectedImportantEventLedger:true,
-        maxImportantEvents:MAX_IMPORTANT_EVENTS
-      },
-      inputCompatibility:{
-        probeOnDemand:true,
-        probeOffByDefault:true,
-        maxInputProbeEvents:MAX_INPUT_PROBE_EVENTS,
-        inputProbeAutoStopMs:INPUT_PROBE_AUTO_STOP_MS,
-        keyboardLockUserTriggeredOnly:true,
-        keyboardLockCodes:[...IMMERSIVE_KEY_CODES],
-        syntheticRemoteInput:false,
-        mouseTransportOverride:false
-      },
-      mouseChordCompatibilityFix:{
-        manualFixGate:false,offByDefault:false,autoIntegratedOnValidatedLabB:true,killSwitchAvailable:true,pageContextHookInstalledAtDocumentStart:true,
-        listenerScope:'Direct EventHandler.shouldIgnoreMouseCompatibilityEvent guard patch; no event-listener reroute',
-        chordCases:['LMB_DOWN_WHILE_RMB','LMB_UP_WHILE_RMB','RMB_DOWN_WHILE_LMB','RMB_UP_WHILE_LMB'],
-        nativeCorrectionTarget:'EventHandler.shouldIgnoreMouseCompatibilityEvent -> native getMouseButtonEvent',
-        transportProof:'pass-through WebSocket.send + ClientDataChannel.send metadata only',
-        payloadMutation:false,idCmdFabrication:false,additionalTransportSend:false,rawPayloadCapture:false,syntheticDomEventDispatch:false
-      },
-      imageFeatureLayer:{stage:'0.1',computation:'EXPORT_ONLY',extraGetStatsCallsPerSample:0,pixelCapture:false,canvasReadback:false,machineLearningRuntime:false},
-      immersiveGameMode:{
-        userTriggered:true,
-        fullscreenOwnershipAware:true,
-        keyboardLockOwnershipAware:true,
-        pointerLockOwnershipAware:true,
-        emergencyExitChord:IMMERSIVE_EXIT_CHORD_LABEL,
-        syntheticRemoteInput:false,
-        streamControlMutation:false
-      }
-    },
-    importantEvents:S.importantEvents.toArray(),
-    events
+    coreTelemetry:{sampleIntervalMs:SAMPLE_MS,rollingWindowMaxSamples:MAX_SAMPLES,retainedSamples:S.samples.count,overwrittenSamples:Math.max(0,S.samples.total-S.samples.count),statistics:buildCoreStatistics(samples),samples:samples.map(supportSampleView)},
+    performanceGuard:{attemptedSamples:S.sampler.samplesAttempted,retainedSamples:S.samples.count,skippedSamples:S.sampler.skipped,bridgeTimeouts:S.sampler.bridgeTimeouts,bridgeErrors:S.bridgeErrors,last:{cycleWallMs:round(S.sampler.lastCycleWallMs,3),localWorkMs:round(S.sampler.lastLocalWorkMs,3),bridgeStatsWallMs:round(S.sampler.lastBridgeStatsWallMs,3),contextWallMs:round(S.sampler.lastContextWallMs,3),uiCostMs:round(S.sampler.lastUiCostMs,3)}},
+    supportEvents:{retained:S.importantEvents.count,overwritten:Math.max(0,S.importantEvents.total-S.importantEvents.count),events:S.importantEvents.toArray()},
+    runtimePolicy:{playFirst:true,imageLabRuntime:false,longSessionMonitor:false,inputLabRuntime:false,mouseTransportProofWrappers:false,inputShadowGuardian:false,extraGetStatsCallsPerSample:0}
   };
 }
 
-async function downloadJSON() {
-  if (S.recording) stopRecording('EXPORT');
+function downloadJSON() {
   addEvent('EXPORT');
-  await collectLongSessionCheckpoint('EXPORT');
-
-  const analysisStart=now();
-  const data=buildExport();
-  S.exportPerf.analysisBuildWallMs=round(now()-analysisStart,3);
-
-  // First stringify measures export cost. A second/final stringify includes that metric.
-  const stringifyStart=now();
-  const draft=JSON.stringify(data,null,2);
-  S.exportPerf.firstStringifyWallMs=round(now()-stringifyStart,3);
-  S.exportPerf.finalStringifyWallMs=null;
-  S.exportPerf.jsonBytes=typeof TextEncoder!=='undefined'
-    ? new TextEncoder().encode(draft).length
-    : draft.length;
-
-  data.performanceGuard.export={...S.exportPerf};
-  const text=JSON.stringify(data,null,2);
-
+  const text=JSON.stringify(buildExport(),null,2);
   const blob=new Blob([text],{type:'application/json;charset=utf-8'});
   const url=URL.createObjectURL(blob);
   const t=new Date().toISOString().replace(/[:.]/g,'-');
   const lab=String(S.lab||'lab').toLowerCase().replace(/[^a-z0-9_-]+/g,'-');
   const browser=String(ENV.browser||'browser').toLowerCase().replace(/[^a-z0-9_-]+/g,'-');
-  const versionTag=`v${VERSION.replace(/\./g,'')}`;
-  const a=document.createElement('a');
-  a.href=url;
-  a.download=`control-suite-${versionTag}-${lab}-${browser}-${t}.json`;
-  a.style.display='none';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),30000);
+  const a=document.createElement('a'); a.href=url; a.download=`control-suite-v081-rc18-${lab}-${browser}-${t}.json`; a.style.display='none';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),30000);
 }
 
 // -----------------------------------------------------------------------------
-// UI - CREATED ONCE, NEVER REBUILT. NO LIVE DOM WORK WHILE CLOSED.
+// UI - PLAY-FIRST
+// Main panel = controls used while playing. Support details are collapsed.
 // -----------------------------------------------------------------------------
-function setText(id, value) {
-  const el = $(id);
-  if (!el) return;
-  const s = value == null ? '--' : String(value);
-  if (el.textContent !== s) el.textContent = s;
-}
-
-function fmt(v, digits = 1, suffix = '') {
-  return Number.isFinite(v) ? `${v.toFixed(digits)}${suffix}` : '--';
-}
+function setText(id,value) { const el=$(id); if(!el)return; const v=value==null?'--':String(value); if(el.textContent!==v)el.textContent=v; }
+function fmt(v,digits=1,suffix='') { return Number.isFinite(v)?`${v.toFixed(digits)}${suffix}`:'--'; }
+function formatRes(r) { return r?.width>0&&r?.height>0?`${r.width}×${r.height}`:'--'; }
 
 function setPanel(open) {
-  S.ui.open = !!open;
-  lsSet(K.panelOpen, open ? 'true' : 'false');
-  const panel = $('bcs-panel');
-  const button = $('bcs-open');
-  if (panel) panel.style.display = open ? 'block' : 'none';
-  if (button) button.style.display = open ? 'none' : 'block';
-  if (open) updateUI();
+  S.ui.open=!!open; lsSet(K.panelOpen,open?'true':'false');
+  const panel=$('bcs-panel'),button=$('bcs-open'); if(panel)panel.style.display=open?'block':'none'; if(button)button.style.display=open?'none':'block';
+  if(open)updateUI();
 }
 
-function formatRes(r) {
-  return r?.width > 0 && r?.height > 0 ? `${r.width}×${r.height}` : '--';
-}
+function updateUI(sample=null) {
+  if(!S.ui.built||!S.ui.open)return;
+  const s=sample||S.latestSample||{};
+  const auto=isAutoEnabled();
+  setText('bcs-auto-state',auto?'ATIVO':'SAFE');
+  setText('bcs-codec',(s.codec||'--').replace('video/',''));
+  setText('bcs-fps-real',fmt(s.decodedFPS??s.rtcFPS,1));
+  setText('bcs-br-real',fmt(s.bitrateMbps,2,' Mbps'));
+  setText('bcs-rtt',fmt(s.rttMs,0,' ms'));
+  setText('bcs-res-real',formatRes(s.inboundResolution||S.lastInboundResolution));
+  setText('bcs-immersive-state',S.immersive.active?'ATIVO':(S.immersive.entering?'ENTRANDO':'OFF'));
+  setText('bcs-fix-state',S.mouseChordFix.enabled?(S.mouseChordFix.guardPatched?'ATIVO':'ATIVANDO'):'OFF');
+  setText('bcs-error',S.immersive.lastError?`${S.immersive.lastError.stage}: ${S.immersive.lastError.error}`:(S.mouseChordFix.lastError||'--'));
 
-function updateUI(sample = null) {
-  if (!S.ui.built || !S.ui.open) return;
-  const s = sample || S.samples.toArray().at(-1) || {};
-
-  const autoEnabled=isAutoEnabled();
-  setText('bcs-auto-state', autoEnabled ? 'ATIVO' : 'DESLIGADO');
-  setText('bcs-control-state', autoEnabled ? (S.control.state === 'ACTIVE' ? 'AUTO + ACTIVE' : 'AUTO') : 'SAFE');
-
-  setText('bcs-codec', (s.codec || '--').replace('video/', ''));
-  setText('bcs-dfps', fmt(s.decodedFPS, 1));
-  setText('bcs-br', fmt(s.bitrateMbps, 2, ' Mbps'));
-  setText('bcs-deep-state', CAP.video.requestVideoFrameCallback ? (S.deep.enabled ? 'ON' : 'OFF') : 'N/A');
-  setText('bcs-callback-hz', S.deep.enabled ? fmt(s.callbackHz,1,' Hz') : '--');
-  setText('bcs-frames-callback', S.deep.enabled ? fmt(s.framesPerCallback,2) : '--');
-  setText('bcs-pacing-jitter', S.deep.enabled ? fmt(s.callbackJitterMs,2,' ms') : '--');
-  const deepPerf=deepPerformanceSnapshot();
-  setText('bcs-deep-work', S.deep.enabled ? fmt(deepPerf.callbackWork.avgMs,3,' ms') : '--');
-  const deepBtn=$('bcs-deep-toggle');
-  if (deepBtn) {
-    deepBtn.disabled=!CAP.video.requestVideoFrameCallback;
-    deepBtn.textContent=!CAP.video.requestVideoFrameCallback ? 'ANALYZER INDISPONÍVEL' : (S.deep.enabled ? 'PARAR ANALYZER' : 'INICIAR ANALYZER');
-  }
-
-  const selectedFps=Number(lsGet(K.fps,'120')) === 60 ? 60 : 120;
-  const fpsSelect=$('bcs-fps-mode');
-  if (fpsSelect && fpsSelect.value !== String(selectedFps)) fpsSelect.value=String(selectedFps);
-
-  const brAuto=lsGet(K.bitrateAuto,'true') !== 'false';
-  const brMode=$('bcs-bitrate-mode');
-  if (brMode && brMode.value !== (brAuto ? 'auto' : 'manual')) brMode.value=brAuto ? 'auto' : 'manual';
-
-  const brValue=clamp(Number(lsGet(K.bitrateManual,'40')) || 40,5,80);
-  const brRange=$('bcs-bitrate-range');
-  if (brRange && brRange.value !== String(brValue)) brRange.value=String(brValue);
-  setText('bcs-bitrate-value',`${brValue} Mbps`);
-  const brRow=$('bcs-bitrate-row');
-  if (brRow) brRow.style.display=brAuto ? 'none' : 'flex';
-
-  const prefMode=lsGet(K.resolutionMode,'native');
-  const prefTarget=resolutionTarget();
-  setText('bcs-pref-res', prefMode==='native' ? 'NATIVO' : formatRes(prefTarget));
-
-  const clientRes=S.control.application?.client?.sessionWindowResolution ||
-                  S.control.application?.client?.safeResolution ||
-                  null;
-  setText('bcs-client-res', clientRes ? formatRes(clientRes) : '--');
-
-  const inbound=s.inboundResolution || s.videoResolution;
-  setText('bcs-achieved-res', formatRes(inbound));
-
-  let simpleStatus='AGUARDANDO';
-  if (!autoEnabled && S.control.state !== 'ACTIVE') simpleStatus='SAFE';
-  else if (inbound && prefTarget && inbound.width===prefTarget.width && inbound.height===prefTarget.height) simpleStatus='ALCANÇADA';
-  else if (inbound && prefTarget) simpleStatus='LIMITADA / ALTERNATIVA';
-  else if (inbound && prefMode==='native') simpleStatus='NATIVA';
-  setText('bcs-simple-status',simpleStatus);
-
-  const P=S.inputProbe;
-  const M=S.mouseTransport;
-  const F=S.mouseChordFix;
-  const I=S.immersive;
-  setText('bcs-immersive-state',I.entering ? 'ENTRANDO' : (I.exiting ? 'SAINDO' : (I.active ? 'ATIVO' : 'OFF')));
-  setText('bcs-input-probe-state',P.enabled ? 'ON' : 'OFF');
-  setText('bcs-input-keyboard-lock-cap',P.keyboardLock.supported ? 'SIM' : 'NÃO');
-  setText('bcs-input-keyboard-lock-state',P.keyboardLock.active ? `ATIVO${P.keyboardLock.owner ? ` • ${P.keyboardLock.owner}` : ''}` : 'OFF');
-  setText('bcs-input-fullscreen',fullscreenElementCompat() ? (I.fullscreenOwned ? 'SIM • V2' : 'SIM') : 'NÃO');
-  setText('bcs-input-pointerlock',document.pointerLockElement ? (I.pointerLockOwned ? 'SIM • NATIVO' : 'SIM') : (I.nativePointerLockArmed ? 'ARMADO' : 'NÃO'));
-  setText('bcs-input-last',inputProbeEventSummaryLabel(P.lastEvent));
-  setText('bcs-input-counts',`${P.counters.keydown}/${P.counters.mousedown}/${P.counters.pointerdown}`);
-  setText('bcs-mouse-transport-state',F.enabled ? 'ATIVO' : 'OFF');
-  setText('bcs-mouse-transport-hooks',`${F.guardPatched?'GUARD':'-'} / ${(F.wsHook&&F.rtcHook)?'WS+RTC':(F.rtcHook?'RTC':'-')}`);
-  setText('bcs-mouse-transport-counts',`${F.counters.guardBypasses}/${F.counters.pairedSameIdCmd}`);
-  setText('bcs-mouse-transport-result',chordFixClassification());
-  setText('bcs-immersive-error',I.lastError ? `${I.lastError.stage}: ${I.lastError.error}` : '--');
-  const probeBtn=$('bcs-input-probe-toggle');
-  if (probeBtn) probeBtn.textContent=P.enabled ? 'PARAR PROBE' : 'INICIAR PROBE';
-  const mouseTransportBtn=$('bcs-mouse-transport-toggle');
-  if (mouseTransportBtn) mouseTransportBtn.textContent=F.enabled ? 'DESATIVAR FIX LMB+RMB' : 'ATIVAR FIX LMB+RMB';
-  const immersiveBtn=$('bcs-immersive-toggle');
-  if (immersiveBtn) {
-    immersiveBtn.disabled=I.entering || I.exiting || !IS_STREAM_DOCUMENT;
-    immersiveBtn.textContent=I.active ? 'SAIR DO IMERSIVO' : (I.entering ? 'ENTRANDO...' : 'ENTRAR IMERSIVO');
-  }
-  const retryBtn=$('bcs-immersive-retry');
-  if (retryBtn) {
-    retryBtn.disabled=!I.active;
-    retryBtn.textContent='RECAPTURAR LOCKS';
-  }
-
-  const autoBtn=$('bcs-start-session');
-  if (autoBtn) autoBtn.textContent=autoEnabled ? 'AUTO ATIVO' : 'ATIVAR AUTO';
+  const fpsSelect=$('bcs-fps-mode'); const fps=Number(lsGet(K.fps,'120'))===60?60:120; if(fpsSelect&&fpsSelect.value!==String(fps))fpsSelect.value=String(fps);
+  const brAuto=lsGet(K.bitrateAuto,'true')!=='false'; const brMode=$('bcs-bitrate-mode'); if(brMode&&brMode.value!==(brAuto?'auto':'manual'))brMode.value=brAuto?'auto':'manual';
+  const brValue=clamp(Number(lsGet(K.bitrateManual,'40'))||40,5,80); const brRange=$('bcs-bitrate-range'); if(brRange&&brRange.value!==String(brValue))brRange.value=String(brValue); setText('bcs-bitrate-value',`${brValue} Mbps`);
+  const brRow=$('bcs-bitrate-row'); if(brRow)brRow.style.display=brAuto?'none':'flex';
+  const resMode=$('bcs-res-mode'); if(resMode&&resMode.value!==lsGet(K.resolutionMode,'native'))resMode.value=lsGet(K.resolutionMode,'native');
+  const custom=$('bcs-custom-row'); if(custom)custom.style.display=lsGet(K.resolutionMode,'native')==='custom'?'flex':'none';
+  const imm=$('bcs-immersive-toggle'); if(imm){imm.disabled=S.immersive.entering||S.immersive.exiting||!IS_STREAM_DOCUMENT;imm.textContent=S.immersive.active?'SAIR DO IMERSIVO':'ENTRAR IMERSIVO';}
+  const autoBtn=$('bcs-start-session'); if(autoBtn)autoBtn.textContent=auto?'AUTO ATIVO':'ATIVAR AUTO';
 }
 
 function createUI() {
-  if ($('bcs-panel')) return;
-
-  const style = document.createElement('style');
-  style.id = 'bcs-style';
-  style.textContent = `
+  if($('bcs-panel'))return;
+  const style=document.createElement('style'); style.id='bcs-style'; style.textContent=`
 #bcs-open,#bcs-panel{position:fixed;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f5f5f7}
 #bcs-open{right:10px;top:max(10px,env(safe-area-inset-top));border:1px solid #3a3a3d;border-radius:12px;background:#171719;color:#fff;padding:9px 11px;font-size:12px;font-weight:850}
-#bcs-panel{right:10px;top:max(10px,env(safe-area-inset-top));width:min(330px,calc(100vw - 20px));max-height:calc(100dvh - 20px);overflow:auto;background:#111113;border:1px solid #343438;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:11px;line-height:1.35}
-#bcs-panel *{box-sizing:border-box}.bcs-head{padding:10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2a2a2d}.bcs-title{font-size:13px;font-weight:900}.bcs-muted{opacity:.6;font-size:9px}.bcs-x{border:0;border-radius:8px;background:#262629;color:#fff;width:30px;height:30px;font-size:18px}.bcs-body{padding:9px}.bcs-card{border:1px solid #29292c;border-radius:10px;margin-bottom:8px;overflow:hidden}.bcs-st{padding:7px 8px;background:#1a1a1d;font-weight:850}.bcs-row{display:flex;justify-content:space-between;gap:10px;padding:6px 8px;border-top:1px solid #232326}.bcs-row b{text-align:right}.bcs-select,.bcs-btn{font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.bcs-select{background:#202023;color:#fff;border:1px solid #3a3a3e;border-radius:7px;padding:5px}.bcs-btn{width:100%;border:1px solid #3a3a3e;border-radius:8px;background:#222225;color:#fff;padding:9px 6px;font-weight:800}.bcs-btn:active{background:#343439}.bcs-primary{background:#2b2b31}.bcs-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:7px}.bcs-note{padding:6px 8px;opacity:.62;font-size:9px}.bcs-status{font-weight:900}.bcs-achieved{font-size:16px}.bcs-danger{border-color:#804040}
-html.bcs-immersive-active,html.bcs-immersive-active body{overflow:hidden!important}
-html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display:none!important}
-#bcs-immersive-overlay{position:fixed;z-index:2147483647;right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));display:flex;gap:6px;align-items:center;padding:5px 6px;border-radius:9px;background:rgba(8,8,10,.44);border:1px solid rgba(255,255,255,.16);font:9px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff;opacity:.38;transition:opacity .16s}
-#bcs-immersive-overlay:hover,#bcs-immersive-overlay:focus-within{opacity:.95}
-#bcs-immersive-overlay button{border:1px solid rgba(255,255,255,.22);border-radius:7px;background:rgba(28,28,32,.82);color:#fff;padding:5px 7px;font:800 9px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-`;
-  (document.head || document.documentElement).appendChild(style);
-
-  const open = document.createElement('button');
-  open.id = 'bcs-open';
-  open.textContent = 'BCS';
-  open.addEventListener('click', () => setPanel(true));
-
-  const panel = document.createElement('div');
-  panel.id = 'bcs-panel';
-  panel.innerHTML = `
-<div class="bcs-head"><div><div class="bcs-title">BOOSTEROID CONTROL v${VERSION}</div><div class="bcs-muted">${IS_STREAM_DOCUMENT ? "STREAM • controle + resultado" : "PRÉ-PLAY • configure antes da fila"}</div></div><button id="bcs-close" class="bcs-x">×</button></div>
+#bcs-panel{right:10px;top:max(10px,env(safe-area-inset-top));width:min(320px,calc(100vw - 20px));max-height:calc(100dvh - 20px);overflow:auto;background:#111113;border:1px solid #343438;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:11px;line-height:1.35}
+#bcs-panel *{box-sizing:border-box}.bcs-head{padding:10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2a2a2d}.bcs-title{font-size:13px;font-weight:900}.bcs-muted{opacity:.6;font-size:9px}.bcs-x{border:0;border-radius:8px;background:#262629;color:#fff;width:30px;height:30px;font-size:18px}.bcs-body{padding:9px}.bcs-card{border:1px solid #29292c;border-radius:10px;margin-bottom:8px;overflow:hidden}.bcs-st{padding:7px 8px;background:#1a1a1d;font-weight:850}.bcs-row{display:flex;justify-content:space-between;gap:10px;padding:6px 8px;border-top:1px solid #232326}.bcs-row b{text-align:right}.bcs-select,.bcs-btn{font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.bcs-select{background:#202023;color:#fff;border:1px solid #3a3a3e;border-radius:7px;padding:5px}.bcs-btn{width:100%;border:1px solid #3a3a3e;border-radius:8px;background:#222225;color:#fff;padding:9px 6px;font-weight:800}.bcs-primary{background:#2b2b31}.bcs-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:7px}.bcs-note{padding:6px 8px;opacity:.62;font-size:9px}.bcs-big{font-size:15px}.bcs-danger{border-color:#804040}.bcs-advanced{margin:8px 0;border:1px solid #29292c;border-radius:10px;padding:7px}.bcs-advanced summary{font-weight:850;cursor:pointer}
+html.bcs-immersive-active,html.bcs-immersive-active body{overflow:hidden!important}html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display:none!important}
+#bcs-immersive-overlay{position:fixed;z-index:2147483647;right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));display:flex;gap:6px;align-items:center;padding:5px 6px;border-radius:9px;background:rgba(8,8,10,.44);border:1px solid rgba(255,255,255,.16);font:9px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff;opacity:.38}#bcs-immersive-overlay button{border:1px solid rgba(255,255,255,.22);border-radius:7px;background:rgba(28,28,32,.82);color:#fff;padding:5px 7px;font:800 9px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}`;
+  (document.head||document.documentElement).appendChild(style);
+  const open=document.createElement('button'); open.id='bcs-open'; open.textContent='BCS'; open.addEventListener('click',()=>setPanel(true));
+  const panel=document.createElement('div'); panel.id='bcs-panel'; panel.innerHTML=`
+<div class="bcs-head"><div><div class="bcs-title">BOOSTEROID CONTROL v${VERSION}</div><div class="bcs-muted">${IS_STREAM_DOCUMENT?'JOGAR • controlar • monitorar':'CONFIGURE UMA VEZ E JOGUE'}</div></div><button id="bcs-close" class="bcs-x">×</button></div>
 <div class="bcs-body">
-  <div class="bcs-card">
-    <div class="bcs-st">VIRTUAL MONITOR</div>
-    <div class="bcs-row"><span>Monitor</span><select id="bcs-res-mode" class="bcs-select"><option value="native">NATIVO</option><option value="1920x1080">1920×1080</option><option value="2400x1080">2400×1080</option><option value="2532x1170">2532×1170</option><option value="2560x1080">2560×1080</option><option value="custom">CUSTOM</option></select></div>
-    <div class="bcs-row" id="bcs-custom-row"><span>Custom</span><span><input id="bcs-res-w" class="bcs-select" style="width:72px" inputmode="numeric" value="1920"> × <input id="bcs-res-h" class="bcs-select" style="width:72px" inputmode="numeric" value="1080"></span></div>
-    <div class="bcs-row"><span>FPS</span><select id="bcs-fps-mode" class="bcs-select"><option value="60">60 FPS</option><option value="120">120 FPS</option></select></div>
-    <div class="bcs-row"><span>Bitrate</span><select id="bcs-bitrate-mode" class="bcs-select"><option value="auto">AUTO</option><option value="manual">MANUAL</option></select></div>
-    <div class="bcs-row" id="bcs-bitrate-row"><span>Limite</span><span><input id="bcs-bitrate-range" type="range" min="5" max="80" step="1" value="40" style="width:120px"> <b id="bcs-bitrate-value">40 Mbps</b></span></div>
-    <div class="bcs-row"><span>Configurado</span><b id="bcs-pref-res">--</b></div>
-    <div class="bcs-row"><span>Cliente</span><b id="bcs-client-res">--</b></div>
-    <div class="bcs-row"><span>Resolução alcançada</span><b id="bcs-achieved-res" class="bcs-achieved">--</b></div>
-    <div class="bcs-row"><span>AUTO</span><b id="bcs-auto-state" class="bcs-status">DESLIGADO</b></div>
-    <div class="bcs-row"><span>Status</span><b id="bcs-simple-status" class="bcs-status">AGUARDANDO</b></div>
-    <div class="bcs-grid"><button id="bcs-apply-monitor" class="bcs-btn bcs-primary">APLICAR CONFIG.</button><button id="bcs-start-session" class="bcs-btn bcs-primary">ATIVAR AUTO</button></div>
-    <div class="bcs-note" id="bcs-action-status">Configure Monitor + FPS + Bitrate. ATIVAR AUTO mantém este perfil nas próximas sessões até você voltar para SAFE.</div>
-  </div>
-
-  <div class="bcs-card">
-    <div class="bcs-st">STREAM / CORE</div>
-    <div class="bcs-row"><span>Codec</span><b id="bcs-codec">--</b></div>
-    <div class="bcs-row"><span>FPS real</span><b id="bcs-dfps">--</b></div>
-    <div class="bcs-row"><span>Bitrate</span><b id="bcs-br">--</b></div>
-    <div class="bcs-row"><span>Estado</span><b id="bcs-control-state">SAFE</b></div>
-  </div>
-
-  <div class="bcs-card" id="bcs-input-card">
-    <div class="bcs-st">IMMERSIVE GAME MODE • V2 NATIVE-FIRST</div>
-    <div class="bcs-row"><span>Modo</span><b id="bcs-immersive-state">OFF</b></div>
-    <div class="bcs-row"><span>Fullscreen / Pointer Lock</span><b><span id="bcs-input-fullscreen">--</span> / <span id="bcs-input-pointerlock">--</span></b></div>
-    <div class="bcs-row"><span>Keyboard Lock API</span><b id="bcs-input-keyboard-lock-cap">--</b></div>
-    <div class="bcs-row"><span>Key Lock</span><b id="bcs-input-keyboard-lock-state">OFF</b></div>
-    <div class="bcs-row"><span>Último erro</span><b id="bcs-immersive-error">--</b></div>
-    <div class="bcs-grid"><button id="bcs-immersive-toggle" class="bcs-btn bcs-primary">ENTRAR IMERSIVO</button><button id="bcs-immersive-retry" class="bcs-btn">REARMAR V2</button></div>
-    <div class="bcs-note">V2: fullscreen + Keyboard Lock ficam sob orquestração BCS; o mouse é capturado pelo CursorModeManager nativo do Boosteroid no próximo clique físico no jogo. Guardian observa blur/visibility e possível input preso sem sintetizar releases. Saída local: ${IMMERSIVE_EXIT_CHORD_LABEL}.</div>
-    <div class="bcs-st">H-014 • DIAGNÓSTICO</div>
-    <div class="bcs-row"><span>Probe</span><b id="bcs-input-probe-state">OFF</b></div>
-    <div class="bcs-row"><span>Key↓ / Mouse↓ / Pointer↓</span><b id="bcs-input-counts">0/0/0</b></div>
-    <div class="bcs-row"><span>Último evento</span><b id="bcs-input-last">--</b></div>
-    <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-input-probe-toggle" class="bcs-btn">INICIAR PROBE</button></div>
-    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC16 não despacha KeyboardEvent/MouseEvent/PointerEvent sintético; o Guardian também não envia recovery remoto.</div>
-    <div class="bcs-st">RC15 • FIX LMB + RMB</div>
-    <div class="bcs-row"><span>Fix</span><b id="bcs-mouse-transport-state">OFF</b></div>
-    <div class="bcs-row"><span>Guard / transporte</span><b id="bcs-mouse-transport-hooks">- / -</b></div>
-    <div class="bcs-row"><span>Bypasses / pares nativos</span><b id="bcs-mouse-transport-counts">0/0</b></div>
-    <div class="bcs-row"><span>Estado</span><b id="bcs-mouse-transport-result">READY_OFF</b></div>
-    <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-mouse-transport-toggle" class="bcs-btn bcs-primary">ATIVAR FIX LMB+RMB</button></div>
-    <div class="bcs-note">EXPERIMENTAL: atua somente nas quatro transições reais de segundo botão. Bypassa apenas o filtro de compatibilidade de 500 ms e deixa getMouseButtonEvent/sendMouseButtonEvent nativos cuidarem do clique; não fabrica id_cmd nem toca no transporte.</div>
-  </div>
-
-  <div class="bcs-card" id="bcs-analyzer-card">
-    <div class="bcs-st">DEEP ANALYZER</div>
-    <div class="bcs-row"><span>Estado</span><b id="bcs-deep-state">OFF</b></div>
-    <div class="bcs-row"><span>Callback</span><b id="bcs-callback-hz">--</b></div>
-    <div class="bcs-row"><span>Frames/callback</span><b id="bcs-frames-callback">--</b></div>
-    <div class="bcs-row"><span>Pacing jitter</span><b id="bcs-pacing-jitter">--</b></div>
-    <div class="bcs-row"><span>Custo callback</span><b id="bcs-deep-work">--</b></div>
-    <div class="bcs-grid"><button id="bcs-deep-toggle" class="bcs-btn bcs-primary">INICIAR ANALYZER</button><button id="bcs-download" class="bcs-btn">BAIXAR LOG</button></div>
-  </div>
-
-  <button id="bcs-safe" class="bcs-btn bcs-danger">VOLTAR PARA SAFE</button>
+ <div class="bcs-card"><div class="bcs-st">CONTROLE</div>
+  <div class="bcs-row"><span>Resolução</span><select id="bcs-res-mode" class="bcs-select"><option value="native">NATIVO</option><option value="1920x1080">1920×1080</option><option value="2400x1080">2400×1080</option><option value="2532x1170">2532×1170</option><option value="2560x1080">2560×1080</option><option value="custom">CUSTOM</option></select></div>
+  <div class="bcs-row" id="bcs-custom-row"><span>Custom</span><span><input id="bcs-res-w" class="bcs-select" style="width:70px" inputmode="numeric"> × <input id="bcs-res-h" class="bcs-select" style="width:70px" inputmode="numeric"></span></div>
+  <div class="bcs-row"><span>FPS</span><select id="bcs-fps-mode" class="bcs-select"><option value="60">60</option><option value="120">120</option></select></div>
+  <div class="bcs-row"><span>Bitrate</span><select id="bcs-bitrate-mode" class="bcs-select"><option value="auto">AUTO</option><option value="manual">MANUAL</option></select></div>
+  <div class="bcs-row" id="bcs-bitrate-row"><span>Limite</span><span><input id="bcs-bitrate-range" type="range" min="5" max="80" step="1" style="width:115px"> <b id="bcs-bitrate-value">--</b></span></div>
+  <div class="bcs-row"><span>Perfil</span><b id="bcs-auto-state">SAFE</b></div>
+  <div class="bcs-grid"><button id="bcs-apply-monitor" class="bcs-btn bcs-primary">${IS_STREAM_DOCUMENT?'APLICAR':'SALVAR'}</button><button id="bcs-start-session" class="bcs-btn bcs-primary">ATIVAR AUTO</button></div>
+ </div>
+ <div class="bcs-card" id="bcs-status-card"><div class="bcs-st">SESSÃO</div>
+  <div class="bcs-row"><span>Resolução real</span><b id="bcs-res-real" class="bcs-big">--</b></div><div class="bcs-row"><span>FPS real</span><b id="bcs-fps-real">--</b></div><div class="bcs-row"><span>Bitrate</span><b id="bcs-br-real">--</b></div><div class="bcs-row"><span>Codec</span><b id="bcs-codec">--</b></div><div class="bcs-row"><span>RTT</span><b id="bcs-rtt">--</b></div>
+ </div>
+ <div class="bcs-card" id="bcs-game-card"><div class="bcs-st">GAME MODE</div><div class="bcs-row"><span>Immersive</span><b id="bcs-immersive-state">OFF</b></div><div class="bcs-grid"><button id="bcs-immersive-toggle" class="bcs-btn bcs-primary">ENTRAR IMERSIVO</button><button id="bcs-immersive-retry" class="bcs-btn">RECAPTURAR</button></div></div>
+ <details class="bcs-advanced"><summary>Advanced / Suporte</summary><div class="bcs-row"><span>Fix LMB+RMB</span><b id="bcs-fix-state">--</b></div><div class="bcs-row"><span>Erro</span><b id="bcs-error">--</b></div><div class="bcs-grid"><button id="bcs-download" class="bcs-btn">BAIXAR LOG</button><button id="bcs-fix-toggle" class="bcs-btn">KILL-SWITCH MOUSE</button></div><div class="bcs-note">Ferramentas de investigação não rodam permanentemente. O log preserva apenas suporte recente.</div></details>
+ <button id="bcs-safe" class="bcs-btn bcs-danger">VOLTAR PARA SAFE</button>
 </div>`;
-
-  document.body.append(open, panel);
-  $('bcs-close').addEventListener('click', () => setPanel(false));
-  if (!IS_STREAM_DOCUMENT) {
-    const streamCard = [...panel.querySelectorAll('.bcs-card')][1];
-    if (streamCard) streamCard.style.display='none';
-    if ($('bcs-safe')) $('bcs-safe').style.display='none';
-    if ($('bcs-analyzer-card')) $('bcs-analyzer-card').style.display='none';
-    if ($('bcs-input-card')) $('bcs-input-card').style.display='none';
-    if ($('bcs-apply-monitor')) $('bcs-apply-monitor').textContent='SALVAR CONFIG.';
-    if ($('bcs-start-session')) $('bcs-start-session').textContent='ATIVAR AUTO';
-  } else {
-    if ($('bcs-apply-monitor')) $('bcs-apply-monitor').textContent='APLICAR AO STREAM';
-    if ($('bcs-start-session')) $('bcs-start-session').textContent='ATIVAR AUTO';
-  }
-  $('bcs-res-mode').value = lsGet(K.resolutionMode, 'native');
-  $('bcs-res-w').value = lsGet(K.resolutionW, '1920');
-  $('bcs-res-h').value = lsGet(K.resolutionH, '1080');
-  $('bcs-fps-mode').value = Number(lsGet(K.fps,'120')) === 60 ? '60' : '120';
-  $('bcs-bitrate-mode').value = lsGet(K.bitrateAuto,'true') !== 'false' ? 'auto' : 'manual';
-  $('bcs-bitrate-range').value = String(clamp(Number(lsGet(K.bitrateManual,'40')) || 40,5,80));
-  $('bcs-bitrate-value').textContent = `${$('bcs-bitrate-range').value} Mbps`;
-
-  const refreshCustomVisibility = () => {
-    const row = $('bcs-custom-row');
-    if (row) row.style.display = lsGet(K.resolutionMode, 'native') === 'custom' ? 'flex' : 'none';
-  };
-  $('bcs-fps-mode').addEventListener('change', e => {
-    const fps=Number(e.target.value) === 60 ? 60 : 120;
-    lsSet(K.fps,fps);
-    addEvent('FPS_PREFERENCE_CHANGE',{fps,source:'fpsRateValue'});
-    saveProfilePreferences();
-    updateUI();
-  });
-  const refreshBitrateVisibility = () => {
-    const auto=lsGet(K.bitrateAuto,'true') !== 'false';
-    const row=$('bcs-bitrate-row');
-    if (row) row.style.display=auto ? 'none' : 'flex';
-  };
-  $('bcs-bitrate-mode').addEventListener('change', e => {
-    const auto=e.target.value === 'auto';
-    lsSet(K.bitrateAuto,auto ? 'true' : 'false');
-    addEvent('BITRATE_PREFERENCE_CHANGE',{auto,mbps:auto?null:Number($('bcs-bitrate-range').value)});
-    refreshBitrateVisibility();
-    saveProfilePreferences();
-    updateUI();
-  });
-  $('bcs-bitrate-range').addEventListener('input', e => {
-    const mbps=clamp(Math.round(Number(e.target.value)||40),5,80);
-    lsSet(K.bitrateManual,mbps);
-    $('bcs-bitrate-value').textContent=`${mbps} Mbps`;
-  });
-  $('bcs-bitrate-range').addEventListener('change', e => {
-    const mbps=clamp(Math.round(Number(e.target.value)||40),5,80);
-    lsSet(K.bitrateManual,mbps);
-    addEvent('BITRATE_PREFERENCE_CHANGE',{auto:false,mbps});
-    saveProfilePreferences();
-    updateUI();
-  });
-  $('bcs-res-mode').addEventListener('change', e => {
-    lsSet(K.resolutionMode, e.target.value);
-    S.control.preferenceMode = e.target.value;
-    addEvent('VIRTUAL_MONITOR_PREFERENCE_CHANGE', { mode: e.target.value, target: resolutionTargetForMode(e.target.value) });
-    saveProfilePreferences();
-    refreshCustomVisibility();
-    updateUI();
-  });
-  const saveCustom = () => {
-    lsSet(K.resolutionW, $('bcs-res-w').value);
-    lsSet(K.resolutionH, $('bcs-res-h').value);
-    saveProfilePreferences();
-    updateUI();
-  };
-  $('bcs-res-w').addEventListener('change', saveCustom);
-  $('bcs-res-h').addEventListener('change', saveCustom);
-  $('bcs-apply-monitor').addEventListener('click', applyVirtualMonitorFromUI);
-  $('bcs-start-session').addEventListener('click', prepareNextSessionFromUI);
-  $('bcs-safe').addEventListener('click', disarmResolutionControl);
-  $('bcs-deep-toggle')?.addEventListener('click', () => setDeepAnalyzerEnabled(!S.deep.enabled,'UI'));
-  $('bcs-input-probe-toggle')?.addEventListener('click', () => setInputProbeEnabled(!S.inputProbe.enabled,'UI'));
-  $('bcs-mouse-transport-toggle')?.addEventListener('click', () => setMouseChordFixEnabled(!S.mouseChordFix.enabled,'UI'));
-  $('bcs-immersive-toggle')?.addEventListener('click', async () => {
-    if (S.immersive.active || S.immersive.entering) await exitImmersiveMode('USER_UI');
-    else await enterImmersiveMode('USER_UI');
-  });
-  $('bcs-immersive-retry')?.addEventListener('click', async () => {
-    await reacquireImmersiveLocks('PANEL_USER_GESTURE');
-  });
-  $('bcs-download')?.addEventListener('click', downloadJSON);
-
-  refreshCustomVisibility();
-  refreshBitrateVisibility();
-  S.ui.built = true;
-  setPanel(lsGet(K.panelOpen, 'false') === 'true');
-  updateUI();
+  document.body.append(open,panel);
+  $('bcs-close').addEventListener('click',()=>setPanel(false));
+  if(!IS_STREAM_DOCUMENT){$('bcs-status-card').style.display='none';$('bcs-game-card').style.display='none';$('bcs-safe').style.display='none';}
+  $('bcs-res-mode').value=lsGet(K.resolutionMode,'native'); $('bcs-res-w').value=lsGet(K.resolutionW,'1920'); $('bcs-res-h').value=lsGet(K.resolutionH,'1080'); $('bcs-fps-mode').value=Number(lsGet(K.fps,'120'))===60?'60':'120'; $('bcs-bitrate-mode').value=lsGet(K.bitrateAuto,'true')!=='false'?'auto':'manual'; $('bcs-bitrate-range').value=String(clamp(Number(lsGet(K.bitrateManual,'40'))||40,5,80));
+  const saveCustom=()=>{lsSet(K.resolutionW,$('bcs-res-w').value);lsSet(K.resolutionH,$('bcs-res-h').value);saveProfilePreferences();updateUI();};
+  $('bcs-res-w').addEventListener('change',saveCustom); $('bcs-res-h').addEventListener('change',saveCustom);
+  $('bcs-res-mode').addEventListener('change',e=>{lsSet(K.resolutionMode,e.target.value);S.control.preferenceMode=e.target.value;saveProfilePreferences();updateUI();});
+  $('bcs-fps-mode').addEventListener('change',e=>{lsSet(K.fps,Number(e.target.value)===60?60:120);saveProfilePreferences();updateUI();});
+  $('bcs-bitrate-mode').addEventListener('change',e=>{lsSet(K.bitrateAuto,e.target.value==='auto'?'true':'false');saveProfilePreferences();updateUI();});
+  $('bcs-bitrate-range').addEventListener('input',e=>{const mb=clamp(Math.round(Number(e.target.value)||40),5,80);lsSet(K.bitrateManual,mb);setText('bcs-bitrate-value',`${mb} Mbps`);});
+  $('bcs-bitrate-range').addEventListener('change',()=>{saveProfilePreferences();updateUI();});
+  $('bcs-apply-monitor').addEventListener('click',applyVirtualMonitorFromUI); $('bcs-start-session').addEventListener('click',prepareNextSessionFromUI); $('bcs-safe').addEventListener('click',disarmResolutionControl);
+  $('bcs-immersive-toggle')?.addEventListener('click',async()=>{if(S.immersive.active||S.immersive.entering)await exitImmersiveMode('USER_UI');else await enterImmersiveMode('USER_UI');});
+  $('bcs-immersive-retry')?.addEventListener('click',()=>reacquireImmersiveLocks('PANEL_USER_GESTURE'));
+  $('bcs-download')?.addEventListener('click',downloadJSON);
+  $('bcs-fix-toggle')?.addEventListener('click',()=>setMouseChordFixEnabled(!S.mouseChordFix.enabled,'ADVANCED_KILL_SWITCH'));
+  S.ui.built=true; setPanel(lsGet(K.panelOpen,'false')==='true'); updateUI();
 }
 
 function waitForBody() {
-  if (document.body) {
-    createUI();
-    bindGlobalSurfaceEvents();
-    videoScanner();
-    return;
-  }
-  setTimeout(waitForBody, 50);
+  if(document.body){createUI();bindGlobalSurfaceEvents();videoScanner();return;}
+  setTimeout(waitForBody,50);
 }
 
 function boot() {
@@ -6321,34 +2129,17 @@ function boot() {
   if (shouldAutoEnableMouseChordFix()) setMouseChordFixEnabled(true,'AUTO_INTEGRATED_LAB_B');
   installPageBridge();
   addEvent('SUITE_BOOT',{
-    version:VERSION,
-    build:BUILD,
-    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC17_IMAGE_FEATURE_EXPORT_ONLY__RC15_CHORD_FIX_AUTO__RC16_IMMERSIVE_V2_NATIVE_FIRST',
-    controlModel:'PERSISTENT_AUTO_APPLY',
-    profileEnabled:isAutoEnabled(),
-    bootBehavior:isAutoEnabled() ? 'AUTO_APPLY_ENABLED' : 'SAFE',
+    version:VERSION,build:BUILD,
+    architecture:'PLAY_FIRST__FROZEN_STREAM_CONTROL__LEAN_CORE_1HZ__IMMERSIVE_V2__H014C_MINIMAL_GUARD__COMPACT_SUPPORT_EXPORT',
+    controlModel:'PERSISTENT_AUTO_APPLY',profileEnabled:isAutoEnabled(),bootBehavior:isAutoEnabled()?'AUTO_APPLY_ENABLED':'SAFE',
     environment:{browser:ENV.browser,likelyPlatform:ENV.likelyPlatform},
-    inputCompatibility:{probeEnabled:false,keyboardLock:CAP.input.keyboardLock,pointerEvents:CAP.input.pointer,pointerLock:CAP.input.pointerLock},
-    mouseChordCompatibilityFix:{enabled:shouldAutoEnableMouseChordFix(),manualGate:false,offByDefault:false,autoIntegratedOnValidatedLabB:true,exactChordCasesOnly:true,nativeHandlerReroute:false,payloadMutation:false,idCmdFabrication:false,additionalTransportSend:false,syntheticDomEventDispatch:false,dualTransportMetadataProof:true},
-    immersiveGameMode:{enabled:false,userTriggered:true,nativeFirst:true,fullscreen:CAP.display.fullscreen,keyboardLock:CAP.input.keyboardLock,pointerLock:CAP.input.pointerLock,pointerLockStrategy:'BOOSTEROID_CURSOR_MODE_MANAGER',inputStateGuardian:true,periodicStateResend:false,exitChord:IMMERSIVE_EXIT_CHORD_LABEL}
+    runtimePruning:{inputLab:false,mouseTransportProof:false,longSessionMonitor:false,imageLab:false,surfaceImageLab:false,inputShadowGuardian:false},
+    mouseChordCompatibilityFix:{autoIntegrated:shouldAutoEnableMouseChordFix(),mode:'H014C_MINIMAL_GUARD_FIX',transportObservation:false},
+    immersiveGameMode:{nativeFirst:true,fullscreen:CAP.display.fullscreen,keyboardLock:CAP.input.keyboardLock,pointerLock:CAP.input.pointerLock,pointerLockStrategy:'BOOSTEROID_CURSOR_MODE_MANAGER',exitChord:IMMERSIVE_EXIT_CHORD_LABEL}
   });
-  if (isAutoEnabled()) {
-    addEvent('AUTO_PROFILE_BOOT',{
-      resolutionMode:lsGet(K.resolutionMode,'native'),
-      resolutionTarget:resolutionTarget(),
-      fps:Number(lsGet(K.fps,'120'))===60?60:120,
-      bitrateAuto:lsGet(K.bitrateAuto,'true')!=='false',
-      bitrateMbps:lsGet(K.bitrateAuto,'true')!=='false' ? null : (Number(lsGet(K.bitrateManual,'0'))||null),
-      streamDocument:IS_STREAM_DOCUMENT
-    });
-  }
-  waitForBody();
-  startSampler();
-  void startLongSessionMonitor();
-  setTimeout(()=>refreshContext(true),1200);
-  debug(`Control Suite v${VERSION} ready`);
+  if (isAutoEnabled()) addEvent('AUTO_PROFILE_BOOT',{resolutionMode:lsGet(K.resolutionMode,'native'),resolutionTarget:resolutionTarget(),fps:Number(lsGet(K.fps,'120'))===60?60:120,bitrateAuto:lsGet(K.bitrateAuto,'true')!=='false',bitrateMbps:lsGet(K.bitrateAuto,'true')!=='false'?null:(Number(lsGet(K.bitrateManual,'0'))||null),streamDocument:IS_STREAM_DOCUMENT});
+  waitForBody(); startSampler(); setTimeout(()=>refreshContext(true),1200); debug(`Control Suite v${VERSION} ready`);
 }
-
 boot();
 
 })();
