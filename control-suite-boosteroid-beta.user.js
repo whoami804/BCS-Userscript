@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc15
-// @description  H-014C direct compatibility-guard bypass: preserves Boosteroid native mouse handler/transport while allowing only true chorded second-button edges through the 500 ms compatibility filter.
+// @version      0.8.1-rc16
+// @description  Immersive v2 native-first: Boosteroid-owned mouse capture + BCS fullscreen/keyboard orchestration and lifecycle/input-state guardian; preserves RC15 H-014C fix.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc15';
-const BUILD = 'Direct Compatibility Guard Bypass + Immersive Game Mode + Telemetry Integrity - RC15';
+const VERSION = '0.8.1-rc16';
+const BUILD = 'Immersive v2 Native-First + Input State Guardian + RC15 Chord Fix - RC16';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -304,7 +304,8 @@ const IMPORTANT_EVENT_TYPES = new Set([
   'LONG_SESSION_PERSISTENCE_RECOVERED','LONG_SESSION_PERSISTENCE_UNAVAILABLE',
   'INPUT_PROBE_START','INPUT_PROBE_STOP','INPUT_KEYBOARD_LOCK_CHANGE','INPUT_KEYBOARD_LOCK_ERROR',
   'MOUSE_SENDER_REFERENCE_DISCOVERY_START','MOUSE_SENDER_REFERENCE_DISCOVERY_STOP',
-  'IMMERSIVE_ENTER','IMMERSIVE_EXIT','IMMERSIVE_FULLSCREEN_CHANGE','IMMERSIVE_POINTER_LOCK_CHANGE','IMMERSIVE_LOCK_ERROR'
+  'IMMERSIVE_ENTER','IMMERSIVE_EXIT','IMMERSIVE_FULLSCREEN_CHANGE','IMMERSIVE_POINTER_LOCK_CHANGE','IMMERSIVE_LOCK_ERROR',
+  'IMMERSIVE_NATIVE_POINTER_ARMED','IMMERSIVE_NATIVE_POINTER_ACQUIRED','IMMERSIVE_SUSPEND','IMMERSIVE_RESUME','IMMERSIVE_POSSIBLE_STUCK_INPUT'
 ]);
 
 function detectEnvironment() {
@@ -548,8 +549,22 @@ const S = {
     targetLabel: null,
     fullscreenOwned: false,
     pointerLockOwned: false,
+    pointerLockPreexistingAtEnter: false,
+    nativePointerLockArmed: false,
+    nativePointerLockArmCount: 0,
+    nativePointerLockAcquisitionCount: 0,
+    directPointerLockRequestCount: 0,
     keyboardLockOwned: false,
     panelWasOpen: false,
+    guardianState: 'OFF',
+    shadowButtons: 0,
+    shadowKeys: Object.create(null),
+    suspendCount: 0,
+    resumeCount: 0,
+    possibleStuckInputCount: 0,
+    lastSuspension: null,
+    lastResume: null,
+    lastPossibleStuckInput: null,
     enteredAtSec: null,
     exitedAtSec: null,
     enterCount: 0,
@@ -1783,10 +1798,12 @@ function mouseChordFixSnapshot(){
 }
 
 // -----------------------------------------------------------------------------
-// IMMERSIVE GAME MODE - RC7 (PRESERVED IN RC8)
-// User-triggered, reversible and ownership-aware. It can augment a pre-existing
-// Boosteroid fullscreen/pointer-lock state without claiming or tearing it down.
-// No synthetic remote input and no Stream Control / Page Bridge mutation.
+// IMMERSIVE GAME MODE - V2 NATIVE-FIRST (RC16)
+// BCS orchestrates fullscreen + Keyboard Lock. Mouse capture remains owned by
+// Boosteroid's native mobile input path / CursorModeManager: BCS never calls
+// requestPointerLock(). Lifecycle/Input State Guardian observes held input state
+// across blur/visibility/pagehide but does not synthesize or resend remote input.
+// RC15 H-014C transport/button fix remains untouched.
 // -----------------------------------------------------------------------------
 function immersiveElementLabel(el) {
   if (!el) return null;
@@ -1798,6 +1815,8 @@ function immersiveElementLabel(el) {
 }
 
 function findImmersiveFullscreenTarget() {
+  // Boosteroid mobile's own fullscreen control targets document.documentElement.
+  if (/Android/i.test(ENV.likelyPlatform || '') && document.documentElement) return document.documentElement;
   const v=S.video || findMainVideo();
   if (!v) return document.documentElement;
   const vw=Math.max(1,window.visualViewport?.width || innerWidth || document.documentElement.clientWidth || 1);
@@ -1869,14 +1888,6 @@ async function exitFullscreenCompat() {
   return false;
 }
 
-async function requestPointerLockCompat(target) {
-  if (!target || typeof target.requestPointerLock !== 'function') throw new Error('POINTER_LOCK_API_UNAVAILABLE');
-  const out=target.requestPointerLock();
-  if (out && typeof out.then === 'function') await out;
-  if (document.pointerLockElement === target || document.pointerLockElement) return true;
-  return waitForDomState(() => !!document.pointerLockElement,350);
-}
-
 function releasePointerLockCompat() {
   if (typeof document.exitPointerLock !== 'function') return false;
   try { document.exitPointerLock(); return true; } catch { return false; }
@@ -1905,8 +1916,8 @@ function updateImmersiveOverlay() {
   const capture=root.querySelector('[data-bcs-immersive-capture]');
   const pointer=!!document.pointerLockElement;
   const key=I.keyboardLockOwned && S.inputProbe.keyboardLock.active && S.inputProbe.keyboardLock.owner==='IMMERSIVE';
-  if (status) status.textContent=`KEY ${key?'ON':(CAP.input.keyboardLock?'OFF':'N/A')} • MOUSE ${pointer?'ON':(CAP.input.pointerLock?'OFF':'N/A')}`;
-  if (capture) capture.style.display=(key && pointer) ? 'none' : 'inline-flex';
+  if (status) status.textContent=`KEY ${key?'ON':(CAP.input.keyboardLock?'OFF':'N/A')} • MOUSE ${pointer?'ON':(CAP.input.pointerLock?'ARMADO':'N/A')}`;
+  if (capture) capture.style.display=pointer ? 'none' : 'inline-flex';
 }
 
 function mountImmersiveOverlay() {
@@ -1916,12 +1927,7 @@ function mountImmersiveOverlay() {
   if (!host || !host.appendChild) return;
   const root=document.createElement('div');
   root.id='bcs-immersive-overlay';
-  root.innerHTML=`<span data-bcs-immersive-status>KEY -- • MOUSE --</span><button type="button" data-bcs-immersive-capture>CAPTURAR</button><button type="button" data-bcs-immersive-exit>SAIR</button>`;
-  root.querySelector('[data-bcs-immersive-capture]')?.addEventListener('click', async e => {
-    e.preventDefault();
-    e.stopPropagation();
-    await reacquireImmersiveLocks('OVERLAY_USER_GESTURE');
-  });
+  root.innerHTML=`<span data-bcs-immersive-status>KEY -- • MOUSE --</span><span data-bcs-immersive-capture>MOUSE: CLIQUE NO JOGO</span><button type="button" data-bcs-immersive-exit>SAIR</button>`;
   root.querySelector('[data-bcs-immersive-exit]')?.addEventListener('click', e => {
     e.preventDefault();
     e.stopPropagation();
@@ -1988,37 +1994,23 @@ async function requestImmersiveKeyboardLock(reason='ENTER') {
   }
 }
 
-async function requestImmersivePointerLock(reason='ENTER') {
+function armNativeImmersivePointerLock(reason='ENTER') {
   const I=S.immersive;
   if (document.pointerLockElement) {
-    I.pointerLockOwned=false;
+    I.nativePointerLockArmed=false;
     updateImmersiveOverlay();
     return true;
   }
-  const target=S.video || fullscreenElementCompat() || I.target;
-  I.pointerLockRequestCount++;
-  if (!CAP.input.pointerLock || !target || typeof target.requestPointerLock !== 'function') {
-    I.pointerLockFailureCount++;
+  if (!CAP.input.pointerLock) {
     setImmersiveError('POINTER_LOCK_UNSUPPORTED','POINTER_LOCK');
     updateImmersiveOverlay();
     return false;
   }
-  try {
-    const ok=await requestPointerLockCompat(target);
-    I.pointerLockOwned=!!ok && document.pointerLockElement===target;
-    if (ok) I.pointerLockSuccessCount++;
-    else I.pointerLockFailureCount++;
-    if (!ok) setImmersiveError('POINTER_LOCK_NOT_ACQUIRED','POINTER_LOCK');
-    addEvent('IMMERSIVE_POINTER_LOCK_CHANGE',{active:!!document.pointerLockElement,owned:I.pointerLockOwned,reason});
-    updateImmersiveOverlay();
-    return !!ok;
-  } catch (e) {
-    I.pointerLockOwned=false;
-    I.pointerLockFailureCount++;
-    setImmersiveError(e,'POINTER_LOCK');
-    updateImmersiveOverlay();
-    return false;
-  }
+  I.nativePointerLockArmed=true;
+  I.nativePointerLockArmCount++;
+  addEvent('IMMERSIVE_NATIVE_POINTER_ARMED',{reason,strategy:'BOOSTEROID_CURSOR_MODE_MANAGER',directRequest:false});
+  updateImmersiveOverlay();
+  return false;
 }
 
 async function reacquireImmersiveLocks(reason='USER_RETRY') {
@@ -2026,12 +2018,61 @@ async function reacquireImmersiveLocks(reason='USER_RETRY') {
   if (!I.active) return false;
   I.lastError=null;
   let keyOk=S.inputProbe.keyboardLock.active && S.inputProbe.keyboardLock.owner==='IMMERSIVE';
-  let pointerOk=!!document.pointerLockElement;
   if (!keyOk) keyOk=await requestImmersiveKeyboardLock(reason);
-  if (!pointerOk) pointerOk=await requestImmersivePointerLock(reason);
+  const pointerOk=!!document.pointerLockElement;
+  if (!pointerOk) armNativeImmersivePointerLock(reason);
   updateUI();
   updateImmersiveOverlay();
   return keyOk || pointerOk;
+}
+
+function immersiveShadowHeldKeys() {
+  const I=S.immersive;
+  return Object.keys(I.shadowKeys || {}).filter(code => I.shadowKeys[code]).slice(0,32);
+}
+
+function updateImmersiveShadowFromMouse(event) {
+  const I=S.immersive;
+  if (!I.active || !event) return;
+  if (Number.isFinite(event.buttons)) I.shadowButtons=event.buttons|0;
+}
+
+function updateImmersiveShadowFromKey(event, down) {
+  const I=S.immersive;
+  if (!I.active || !event?.code) return;
+  if (down) I.shadowKeys[event.code]=true;
+  else delete I.shadowKeys[event.code];
+}
+
+function noteImmersiveSuspension(reason='UNKNOWN') {
+  const I=S.immersive;
+  if (!I.active || I.guardianState==='SUSPENDED') return;
+  const heldKeys=immersiveShadowHeldKeys();
+  const heldButtons=I.shadowButtons|0;
+  const atSec=round(elapsed(),3);
+  I.guardianState='SUSPENDED';
+  I.suspendCount++;
+  I.lastSuspension={reason,atSec,heldButtons,heldKeys};
+  addEvent('IMMERSIVE_SUSPEND',I.lastSuspension);
+  if (heldButtons || heldKeys.length) {
+    I.possibleStuckInputCount++;
+    I.lastPossibleStuckInput={reason,atSec,heldButtons,heldKeys};
+    addEvent('IMMERSIVE_POSSIBLE_STUCK_INPUT',I.lastPossibleStuckInput);
+  }
+  // Local shadow state is invalid after focus/visibility loss. Do not send releases.
+  I.shadowButtons=0;
+  I.shadowKeys=Object.create(null);
+}
+
+function noteImmersiveResume(reason='UNKNOWN') {
+  const I=S.immersive;
+  if (!I.active || I.guardianState!=='SUSPENDED') return;
+  I.guardianState='ACTIVE';
+  I.resumeCount++;
+  I.lastResume={reason,atSec:round(elapsed(),3)};
+  addEvent('IMMERSIVE_RESUME',I.lastResume);
+  if (!document.pointerLockElement) armNativeImmersivePointerLock(`RESUME_${reason}`);
+  updateImmersiveOverlay();
 }
 
 function immersiveExitChordMatches(e) {
@@ -2045,6 +2086,7 @@ function bindImmersiveLifecycleEvents() {
     const active=!!fullscreenElementCompat();
     addEvent('IMMERSIVE_FULLSCREEN_CHANGE',{active,owned:I.fullscreenOwned,phase:I.phase});
     if (!active && (I.active || I.entering || I.exiting)) {
+      if (document.hidden || !document.hasFocus?.()) noteImmersiveSuspension('FULLSCREEN_LOST_WITH_FOCUS_LOSS');
       void exitImmersiveMode('FULLSCREEN_LOST',{skipFullscreenExit:true,restorePanel:true});
     } else {
       updateImmersiveOverlay();
@@ -2053,28 +2095,55 @@ function bindImmersiveLifecycleEvents() {
   };
   const onPointerLock=() => {
     const active=!!document.pointerLockElement;
-    if (!active) I.pointerLockOwned=false;
-    addEvent('IMMERSIVE_POINTER_LOCK_CHANGE',{active,owned:I.pointerLockOwned,phase:I.phase});
+    if (active && I.active && !I.pointerLockPreexistingAtEnter && !I.pointerLockOwned) {
+      I.pointerLockOwned=true;
+      I.nativePointerLockArmed=false;
+      I.nativePointerLockAcquisitionCount++;
+      I.pointerLockSuccessCount++;
+      addEvent('IMMERSIVE_NATIVE_POINTER_ACQUIRED',{element:immersiveElementLabel(document.pointerLockElement),strategy:'BOOSTEROID_CURSOR_MODE_MANAGER'});
+    } else if (!active) {
+      I.pointerLockOwned=false;
+      if (I.active && I.phase==='ACTIVE' && !document.hidden && (typeof document.hasFocus!=='function' || document.hasFocus())) armNativeImmersivePointerLock('POINTER_LOCK_LOST');
+    }
+    addEvent('IMMERSIVE_POINTER_LOCK_CHANGE',{active,owned:I.pointerLockOwned,phase:I.phase,nativeFirst:true});
     updateImmersiveOverlay();
     updateUI();
   };
   const onKeyDown=e => {
+    updateImmersiveShadowFromKey(e,true);
     if (!I.active || !immersiveExitChordMatches(e)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     void exitImmersiveMode('EMERGENCY_EXIT_CHORD');
   };
+  const onKeyUp=e => updateImmersiveShadowFromKey(e,false);
+  const onMouseDown=e => updateImmersiveShadowFromMouse(e);
+  const onMouseUp=e => updateImmersiveShadowFromMouse(e);
+  const onVisibility=() => {
+    if (!I.active) return;
+    if (document.hidden) noteImmersiveSuspension('VISIBILITY_HIDDEN');
+    else noteImmersiveResume('VISIBILITY_VISIBLE');
+  };
+  const onBlur=() => noteImmersiveSuspension('WINDOW_BLUR');
+  const onFocus=() => noteImmersiveResume('WINDOW_FOCUS');
   const onPageHide=() => {
+    noteImmersiveSuspension('PAGEHIDE');
     try {
       if (I.keyboardLockOwned) navigator.keyboard?.unlock?.();
       if (I.pointerLockOwned) document.exitPointerLock?.();
     } catch {}
   };
-  I.handlers={onFullscreen,onPointerLock,onKeyDown,onPageHide};
+  I.handlers={onFullscreen,onPointerLock,onKeyDown,onKeyUp,onMouseDown,onMouseUp,onVisibility,onBlur,onFocus,onPageHide};
   document.addEventListener('fullscreenchange',onFullscreen,true);
   document.addEventListener('webkitfullscreenchange',onFullscreen,true);
   document.addEventListener('pointerlockchange',onPointerLock,true);
+  document.addEventListener('visibilitychange',onVisibility,true);
+  document.addEventListener('mousedown',onMouseDown,true);
+  document.addEventListener('mouseup',onMouseUp,true);
   window.addEventListener('keydown',onKeyDown,true);
+  window.addEventListener('keyup',onKeyUp,true);
+  window.addEventListener('blur',onBlur,true);
+  window.addEventListener('focus',onFocus,true);
   window.addEventListener('pagehide',onPageHide,true);
   I.bound=true;
 }
@@ -2086,7 +2155,13 @@ function unbindImmersiveLifecycleEvents() {
   document.removeEventListener('fullscreenchange',h.onFullscreen,true);
   document.removeEventListener('webkitfullscreenchange',h.onFullscreen,true);
   document.removeEventListener('pointerlockchange',h.onPointerLock,true);
+  document.removeEventListener('visibilitychange',h.onVisibility,true);
+  document.removeEventListener('mousedown',h.onMouseDown,true);
+  document.removeEventListener('mouseup',h.onMouseUp,true);
   window.removeEventListener('keydown',h.onKeyDown,true);
+  window.removeEventListener('keyup',h.onKeyUp,true);
+  window.removeEventListener('blur',h.onBlur,true);
+  window.removeEventListener('focus',h.onFocus,true);
   window.removeEventListener('pagehide',h.onPageHide,true);
   I.handlers=null;
   I.bound=false;
@@ -2100,9 +2175,14 @@ function finalizeImmersiveExit(reason='EXIT', restorePanel=true) {
   I.entering=false;
   I.exiting=false;
   I.phase='OFF';
+  I.guardianState='OFF';
   I.fullscreenOwned=false;
   I.pointerLockOwned=false;
+  I.pointerLockPreexistingAtEnter=false;
+  I.nativePointerLockArmed=false;
   I.keyboardLockOwned=false;
+  I.shadowButtons=0;
+  I.shadowKeys=Object.create(null);
   I.target=null;
   I.targetLabel=null;
   I.exitedAtSec=round(elapsed(),3);
@@ -2133,11 +2213,17 @@ async function enterImmersiveMode(reason='USER_UI') {
   I.entering=true;
   I.exiting=false;
   I.phase='ENTERING';
+  I.guardianState='ENTERING';
   I.lastError=null;
   I.lastReason=reason;
   I.panelWasOpen=!!S.ui.open;
   I.enterCount++;
   I.enteredAtSec=null;
+  I.shadowButtons=0;
+  I.shadowKeys=Object.create(null);
+  I.pointerLockPreexistingAtEnter=!!document.pointerLockElement;
+  I.pointerLockOwned=false;
+  I.nativePointerLockArmed=false;
   bindImmersiveLifecycleEvents();
   setPanel(false);
   const preexistingFullscreen=fullscreenElementCompat();
@@ -2157,6 +2243,7 @@ async function enterImmersiveMode(reason='USER_UI') {
     setImmersiveError(e,'FULLSCREEN');
     I.entering=false;
     I.phase='ERROR';
+    I.guardianState='ERROR';
     document.documentElement?.classList?.remove('bcs-immersive-active');
     unbindImmersiveLifecycleEvents();
     if (I.panelWasOpen && S.ui.built) setPanel(true);
@@ -2166,12 +2253,18 @@ async function enterImmersiveMode(reason='USER_UI') {
   I.active=true;
   I.entering=false;
   I.phase='ACTIVE';
+  I.guardianState='ACTIVE';
   I.enteredAtSec=round(elapsed(),3);
   document.documentElement?.classList?.add('bcs-immersive-active');
   mountImmersiveOverlay();
   const keyboardOk=await requestImmersiveKeyboardLock('ENTER');
-  const pointerOk=await requestImmersivePointerLock('ENTER');
-  addEvent('IMMERSIVE_ENTER',{reason,atSec:I.enteredAtSec,target:I.targetLabel,fullscreenOwned:I.fullscreenOwned,keyboardLock:keyboardOk,pointerLock:pointerOk,exitChord:IMMERSIVE_EXIT_CHORD_LABEL});
+  const pointerAlready=!!document.pointerLockElement;
+  if (!pointerAlready) armNativeImmersivePointerLock('ENTER');
+  addEvent('IMMERSIVE_ENTER',{
+    reason,atSec:I.enteredAtSec,target:I.targetLabel,fullscreenOwned:I.fullscreenOwned,
+    keyboardLock:keyboardOk,pointerLock:pointerAlready,pointerLockStrategy:'BOOSTEROID_CURSOR_MODE_MANAGER',
+    directPointerLockRequest:false,exitChord:IMMERSIVE_EXIT_CHORD_LABEL
+  });
   updateImmersiveOverlay();
   updateUI();
   return true;
@@ -2190,7 +2283,8 @@ async function exitImmersiveMode(reason='USER_UI', options={}) {
     await releaseKeyboardLock(`IMMERSIVE_${reason}`,'IMMERSIVE');
     I.keyboardLockOwned=false;
   }
-  if (pointerOwned && document.pointerLockElement) {
+  // Only release a pointer lock acquired during this Immersive session.
+  if (pointerOwned && !I.pointerLockPreexistingAtEnter && document.pointerLockElement) {
     releasePointerLockCompat();
     I.pointerLockOwned=false;
   }
@@ -2205,14 +2299,27 @@ async function exitImmersiveMode(reason='USER_UI', options={}) {
 function immersiveSnapshot() {
   const I=S.immersive;
   return {
-    schemaVersion:1,
-    mode:'IMMERSIVE_GAME_MODE',
+    schemaVersion:2,
+    mode:'IMMERSIVE_GAME_MODE_V2_NATIVE_FIRST',
     phase:I.phase,
     active:I.active,
     userTriggered:true,
-    fullscreen:{supported:CAP.display.fullscreen,active:!!fullscreenElementCompat(),ownedByRC7:I.fullscreenOwned,target:I.targetLabel,navigationUIHideRequested:true},
-    keyboardLock:{supported:CAP.input.keyboardLock,active:S.inputProbe.keyboardLock.active && S.inputProbe.keyboardLock.owner==='IMMERSIVE',ownedByRC7:I.keyboardLockOwned,codes:[...IMMERSIVE_KEY_CODES],requestCount:I.keyboardLockRequestCount,successCount:I.keyboardLockSuccessCount,failureCount:I.keyboardLockFailureCount},
-    pointerLock:{supported:CAP.input.pointerLock,active:!!document.pointerLockElement,ownedByRC7:I.pointerLockOwned,requestCount:I.pointerLockRequestCount,successCount:I.pointerLockSuccessCount,failureCount:I.pointerLockFailureCount},
+    nativeFirst:true,
+    fullscreen:{supported:CAP.display.fullscreen,active:!!fullscreenElementCompat(),ownedByBCS:I.fullscreenOwned,target:I.targetLabel,navigationUIHideRequested:true,androidNativeTarget:/Android/i.test(ENV.likelyPlatform||'')?'document.documentElement':'platform-adaptive'},
+    keyboardLock:{supported:CAP.input.keyboardLock,active:S.inputProbe.keyboardLock.active && S.inputProbe.keyboardLock.owner==='IMMERSIVE',ownedByBCS:I.keyboardLockOwned,codes:[...IMMERSIVE_KEY_CODES],requestCount:I.keyboardLockRequestCount,successCount:I.keyboardLockSuccessCount,failureCount:I.keyboardLockFailureCount},
+    pointerLock:{
+      supported:CAP.input.pointerLock,active:!!document.pointerLockElement,ownedByBCSMechanism:false,
+      sessionAcquired:I.pointerLockOwned,preexistingAtEnter:I.pointerLockPreexistingAtEnter,
+      strategy:'BOOSTEROID_CURSOR_MODE_MANAGER',directRequestCount:I.directPointerLockRequestCount,
+      nativeArmCount:I.nativePointerLockArmCount,nativeAcquisitionCount:I.nativePointerLockAcquisitionCount,
+      legacyRequestCount:I.pointerLockRequestCount,successCount:I.pointerLockSuccessCount,failureCount:I.pointerLockFailureCount
+    },
+    guardian:{
+      state:I.guardianState,shadowButtons:I.shadowButtons|0,heldKeyCodes:immersiveShadowHeldKeys(),
+      suspendCount:I.suspendCount,resumeCount:I.resumeCount,possibleStuckInputCount:I.possibleStuckInputCount,
+      lastSuspension:I.lastSuspension,lastResume:I.lastResume,lastPossibleStuckInput:I.lastPossibleStuckInput,
+      sendsRecoveryInput:false,periodicStateResend:false
+    },
     exit:{emergencyChord:IMMERSIVE_EXIT_CHORD_LABEL,localInterceptionOnlyForEmergencyChord:true,cleanUnlockOnExit:true,preservesPreexistingFullscreenAndPointerLockOwnership:true},
     enterCount:I.enterCount,
     exitCount:I.exitCount,
@@ -5675,7 +5782,7 @@ function buildExport() {
       pageMethodOverrides:S.control.state==='ACTIVE' && (S.control.application?.patch?.patched||S.control.application?.patched) ? ['StreamDeviceContext.getSafeResolution','SessionHandler.getWindowResolution'] : [],
       exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
       controlModel:'PERSISTENT_AUTO_APPLY',
-      telemetryIntegrityModel:'RC15_DIRECT_COMPATIBILITY_GUARD_BYPASS_PLUS_DUAL_TRANSPORT_CONFIRMATION_PLUS_RC7_IMMERSIVE_GAME_MODE',
+      telemetryIntegrityModel:'RC16_IMMERSIVE_V2_NATIVE_FIRST_PLUS_INPUT_STATE_GUARDIAN_PLUS_RC15_CHORD_FIX',
       legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
       longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls',
       telemetryIntegrity:{
@@ -5851,8 +5958,8 @@ function updateUI(sample = null) {
   setText('bcs-input-probe-state',P.enabled ? 'ON' : 'OFF');
   setText('bcs-input-keyboard-lock-cap',P.keyboardLock.supported ? 'SIM' : 'NÃO');
   setText('bcs-input-keyboard-lock-state',P.keyboardLock.active ? `ATIVO${P.keyboardLock.owner ? ` • ${P.keyboardLock.owner}` : ''}` : 'OFF');
-  setText('bcs-input-fullscreen',fullscreenElementCompat() ? (I.fullscreenOwned ? 'SIM • RC7' : 'SIM') : 'NÃO');
-  setText('bcs-input-pointerlock',document.pointerLockElement ? (I.pointerLockOwned ? 'SIM • RC7' : 'SIM') : 'NÃO');
+  setText('bcs-input-fullscreen',fullscreenElementCompat() ? (I.fullscreenOwned ? 'SIM • V2' : 'SIM') : 'NÃO');
+  setText('bcs-input-pointerlock',document.pointerLockElement ? (I.pointerLockOwned ? 'SIM • NATIVO' : 'SIM') : (I.nativePointerLockArmed ? 'ARMADO' : 'NÃO'));
   setText('bcs-input-last',inputProbeEventSummaryLabel(P.lastEvent));
   setText('bcs-input-counts',`${P.counters.keydown}/${P.counters.mousedown}/${P.counters.pointerdown}`);
   setText('bcs-mouse-transport-state',F.enabled ? 'ATIVO' : 'OFF');
@@ -5932,20 +6039,20 @@ html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display
   </div>
 
   <div class="bcs-card" id="bcs-input-card">
-    <div class="bcs-st">IMMERSIVE GAME MODE • RC7 (PRESERVADO)</div>
+    <div class="bcs-st">IMMERSIVE GAME MODE • V2 NATIVE-FIRST</div>
     <div class="bcs-row"><span>Modo</span><b id="bcs-immersive-state">OFF</b></div>
     <div class="bcs-row"><span>Fullscreen / Pointer Lock</span><b><span id="bcs-input-fullscreen">--</span> / <span id="bcs-input-pointerlock">--</span></b></div>
     <div class="bcs-row"><span>Keyboard Lock API</span><b id="bcs-input-keyboard-lock-cap">--</b></div>
     <div class="bcs-row"><span>Key Lock</span><b id="bcs-input-keyboard-lock-state">OFF</b></div>
     <div class="bcs-row"><span>Último erro</span><b id="bcs-immersive-error">--</b></div>
-    <div class="bcs-grid"><button id="bcs-immersive-toggle" class="bcs-btn bcs-primary">ENTRAR IMERSIVO</button><button id="bcs-immersive-retry" class="bcs-btn">RECAPTURAR LOCKS</button></div>
-    <div class="bcs-note">Entrar solicita fullscreen com UI de navegação oculta, Keyboard Lock para Escape/Tab e Pointer Lock. Saída local de emergência: ${IMMERSIVE_EXIT_CHORD_LABEL}. Estados de fullscreen/pointer lock que já existiam antes da RC7 não são desmontados por ela.</div>
+    <div class="bcs-grid"><button id="bcs-immersive-toggle" class="bcs-btn bcs-primary">ENTRAR IMERSIVO</button><button id="bcs-immersive-retry" class="bcs-btn">REARMAR V2</button></div>
+    <div class="bcs-note">V2: fullscreen + Keyboard Lock ficam sob orquestração BCS; o mouse é capturado pelo CursorModeManager nativo do Boosteroid no próximo clique físico no jogo. Guardian observa blur/visibility e possível input preso sem sintetizar releases. Saída local: ${IMMERSIVE_EXIT_CHORD_LABEL}.</div>
     <div class="bcs-st">H-014 • DIAGNÓSTICO</div>
     <div class="bcs-row"><span>Probe</span><b id="bcs-input-probe-state">OFF</b></div>
     <div class="bcs-row"><span>Key↓ / Mouse↓ / Pointer↓</span><b id="bcs-input-counts">0/0/0</b></div>
     <div class="bcs-row"><span>Último evento</span><b id="bcs-input-last">--</b></div>
     <div class="bcs-grid" style="grid-template-columns:1fr"><button id="bcs-input-probe-toggle" class="bcs-btn">INICIAR PROBE</button></div>
-    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC15 não despacha KeyboardEvent/MouseEvent/PointerEvent sintético.</div>
+    <div class="bcs-note">Probe RC6 preservado, observacional e temporário. RC16 não despacha KeyboardEvent/MouseEvent/PointerEvent sintético; o Guardian também não envia recovery remoto.</div>
     <div class="bcs-st">RC15 • FIX LMB + RMB</div>
     <div class="bcs-row"><span>Fix</span><b id="bcs-mouse-transport-state">OFF</b></div>
     <div class="bcs-row"><span>Guard / transporte</span><b id="bcs-mouse-transport-hooks">- / -</b></div>
@@ -6080,14 +6187,14 @@ function boot() {
   addEvent('SUITE_BOOT',{
     version:VERSION,
     build:BUILD,
-    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC15_DIRECT_COMPATIBILITY_GUARD_BYPASS__RC7_IMMERSIVE_GAME_MODE',
+    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC15_CHORD_FIX__RC16_IMMERSIVE_V2_NATIVE_FIRST',
     controlModel:'PERSISTENT_AUTO_APPLY',
     profileEnabled:isAutoEnabled(),
     bootBehavior:isAutoEnabled() ? 'AUTO_APPLY_ENABLED' : 'SAFE',
     environment:{browser:ENV.browser,likelyPlatform:ENV.likelyPlatform},
     inputCompatibility:{probeEnabled:false,keyboardLock:CAP.input.keyboardLock,pointerEvents:CAP.input.pointer,pointerLock:CAP.input.pointerLock},
     mouseChordCompatibilityFix:{enabled:false,manualGate:true,offByDefault:true,exactChordCasesOnly:true,nativeHandlerReroute:true,payloadMutation:false,idCmdFabrication:false,additionalTransportSend:false,syntheticDomEventDispatch:false,dualTransportMetadataProof:true},
-    immersiveGameMode:{enabled:false,userTriggered:true,fullscreen:CAP.display.fullscreen,keyboardLock:CAP.input.keyboardLock,pointerLock:CAP.input.pointerLock,exitChord:IMMERSIVE_EXIT_CHORD_LABEL}
+    immersiveGameMode:{enabled:false,userTriggered:true,nativeFirst:true,fullscreen:CAP.display.fullscreen,keyboardLock:CAP.input.keyboardLock,pointerLock:CAP.input.pointerLock,pointerLockStrategy:'BOOSTEROID_CURSOR_MODE_MANAGER',inputStateGuardian:true,periodicStateResend:false,exitChord:IMMERSIVE_EXIT_CHORD_LABEL}
   });
   if (isAutoEnabled()) {
     addEvent('AUTO_PROFILE_BOOT',{
