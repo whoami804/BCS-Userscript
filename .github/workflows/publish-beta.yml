@@ -3,11 +3,13 @@ name: Publish beta userscript
 on:
   push:
     paths:
-      - 'tools/build-rc17.py'
+      - 'tools/build-rc18.py'
+      - 'payloads/rc18/**'
       - '.github/workflows/publish-beta.yml'
   pull_request:
     paths:
-      - 'tools/build-rc17.py'
+      - 'tools/build-rc18.py'
+      - 'payloads/rc18/**'
       - '.github/workflows/publish-beta.yml'
 
 permissions:
@@ -26,10 +28,11 @@ jobs:
       - name: Build and validate beta userscript
         shell: bash
         run: |
-          echo 'd079b13b6301e60ae7c22cc9e9ddbc30e8ea7fa26ade9c9a29c300880c51057c  control-suite-boosteroid-beta.user.js' | sha256sum -c -
-          python tools/build-rc17.py control-suite-boosteroid-beta.user.js /tmp/beta-next.user.js
-          echo 'e077fb5f43a923eef8aca4668386805e941e4521e08e7aa302edfc5c56f26233  /tmp/beta-next.user.js' | sha256sum -c -
+          echo 'e077fb5f43a923eef8aca4668386805e941e4521e08e7aa302edfc5c56f26233  control-suite-boosteroid-beta.user.js' | sha256sum -c -
+          python tools/build-rc18.py /tmp/beta-next.user.js
+          echo '030081a953990a1c66276fee272be3dd35f1b4d45f21dfd4682be5905f355b9a  /tmp/beta-next.user.js' | sha256sum -c -
           node --check /tmp/beta-next.user.js
+          grep -q '^// @version      0.8.1-rc18$' /tmp/beta-next.user.js
           mv /tmp/beta-next.user.js control-suite-boosteroid-beta.user.js
 
       - name: Publish fixed beta URL
@@ -42,5 +45,5 @@ jobs:
             echo 'No distribution change.'
             exit 0
           fi
-          git commit -m 'Publish v0.8.1-rc17 beta userscript'
+          git commit -m 'Publish v0.8.1-rc18 beta userscript'
           git push origin HEAD:${{ github.head_ref || github.ref_name }}
