@@ -3,11 +3,11 @@ name: Publish beta userscript
 on:
   push:
     paths:
-      - 'patches/rc16-to-rc17.patch.gz.b64'
+      - 'tools/build-rc17.py'
       - '.github/workflows/publish-beta.yml'
   pull_request:
     paths:
-      - 'patches/rc16-to-rc17.patch.gz.b64'
+      - 'tools/build-rc17.py'
       - '.github/workflows/publish-beta.yml'
 
 permissions:
@@ -23,13 +23,11 @@ jobs:
         with:
           ref: ${{ github.head_ref || github.ref_name }}
 
-      - name: Patch and validate beta userscript
+      - name: Build and validate beta userscript
         shell: bash
         run: |
           echo 'd079b13b6301e60ae7c22cc9e9ddbc30e8ea7fa26ade9c9a29c300880c51057c  control-suite-boosteroid-beta.user.js' | sha256sum -c -
-          base64 -d patches/rc16-to-rc17.patch.gz.b64 | gzip -d > /tmp/rc16-to-rc17.patch
-          cp control-suite-boosteroid-beta.user.js /tmp/beta-next.user.js
-          patch --batch /tmp/beta-next.user.js < /tmp/rc16-to-rc17.patch
+          python tools/build-rc17.py control-suite-boosteroid-beta.user.js /tmp/beta-next.user.js
           echo 'e077fb5f43a923eef8aca4668386805e941e4521e08e7aa302edfc5c56f26233  /tmp/beta-next.user.js' | sha256sum -c -
           node --check /tmp/beta-next.user.js
           mv /tmp/beta-next.user.js control-suite-boosteroid-beta.user.js
