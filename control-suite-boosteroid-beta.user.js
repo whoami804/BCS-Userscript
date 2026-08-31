@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc16
-// @description  Immersive v2 native-first: Boosteroid-owned mouse capture + BCS fullscreen/keyboard orchestration and lifecycle/input-state guardian; preserves RC15 H-014C fix.
+// @version      0.8.1-rc17
+// @description  Image Lab Feature Layer 0.1: export-only derived quality features with zero extra getStats/pixel analysis; Immersive v2 + integrated H-014C fix preserved.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc16';
-const BUILD = 'Immersive v2 Native-First + Input State Guardian + RC15 Chord Fix - RC16';
+const VERSION = '0.8.1-rc17';
+const BUILD = 'Image Lab Feature Layer 0.1 + Immersive v2 Native-First + Integrated H-014C Fix - RC17';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 5000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -1765,6 +1765,10 @@ emit(stateView('READY'));
   catch(e){pushChordFixEvent('CHORD_FIX_INSTALL_ERROR',{error:String(e?.message||e).slice(0,180)},true);}
 }
 
+function shouldAutoEnableMouseChordFix(){
+  return S.lab==='LAB-B' && ENV.engine==='Chromium';
+}
+
 function setMouseChordFixEnabled(enabled,reason='UI'){
   const F=S.mouseChordFix; enabled=!!enabled;
   if(enabled===F.enabled) return;
@@ -1788,7 +1792,7 @@ function chordFixClassification(){
 
 function mouseChordFixSnapshot(){
   const F=S.mouseChordFix;
-  return {schemaVersion:2,mode:'H014C_DIRECT_COMPATIBILITY_GUARD_BYPASS',enabled:F.enabled,manualGate:true,offByDefault:true,
+  return {schemaVersion:3,mode:'H014C_DIRECT_COMPATIBILITY_GUARD_BYPASS',enabled:F.enabled,manualGate:false,offByDefault:false,autoIntegratedOnValidatedLabB:true,
     implementation:'Patch Boosteroid EventHandler.shouldIgnoreMouseCompatibilityEvent in page lexical scope. Preserve original result except when it would suppress one of four true chorded mousedown/up transitions; then return false and let untouched getMouseButtonEvent/sendMouseButtonEvent execute.',
     sourceBasis:{catchEventsVersion:'3.7.19.1.1',compatibilitySuppressionMs:500,nativeMousePath:'getMouseButtonEvent(event) -> sendMouseButtonEvent(event, event.type === mousedown)',nativeTransport:'SessionHandler.sendEvents -> WebSocket(from_udp=false) + ClientDataChannel(from_udp=true) with same id_cmd'},
     invariants:{pointerHandlerReroute:false,compatibilityWindowRefreshByFix:false,rawTransportCapture:false,payloadMutation:false,idCmdFabrication:false,additionalTransportSend:false,syntheticDomEventDispatch:false,streamControlMutation:false},
@@ -2548,6 +2552,9 @@ function installPageBridge() {
         totalInterFrameDelay:n(inbound.totalInterFrameDelay),
         totalSquaredInterFrameDelay:n(inbound.totalSquaredInterFrameDelay),
         qpSum:n(inbound.qpSum),
+        totalCorruptionProbability:n(inbound.totalCorruptionProbability),
+        totalSquaredCorruptionProbability:n(inbound.totalSquaredCorruptionProbability),
+        corruptionMeasurements:n(inbound.corruptionMeasurements),
         nackCount:n(inbound.nackCount),
         pliCount:n(inbound.pliCount),
         firCount:n(inbound.firCount),
@@ -3558,6 +3565,9 @@ function processRtc(raw, localNow) {
     totalInterFrameDelay: r.totalInterFrameDelay ?? null,
     totalSquaredInterFrameDelay: r.totalSquaredInterFrameDelay ?? null,
     qpSum: r.qpSum ?? null,
+    totalCorruptionProbability: r.totalCorruptionProbability ?? null,
+    totalSquaredCorruptionProbability: r.totalSquaredCorruptionProbability ?? null,
+    corruptionMeasurements: r.corruptionMeasurements ?? null,
     nackCount: r.nackCount ?? null,
     pliCount: r.pliCount ?? null,
     firCount: r.firCount ?? null,
@@ -3598,7 +3608,9 @@ function processRtc(raw, localNow) {
     jitterBufferTargetMs: null,
     jitterBufferMinimumMs: null,
     framesReceivedRaw: cur.framesReceived,
+    framesReceivedDelta: null,
     framesDecodedRaw: cur.framesDecoded,
+    framesDecodedDelta: null,
     framesDroppedRaw: cur.framesDropped,
     framesDroppedDelta: null,
     framesRenderedRaw: cur.framesRendered,
@@ -3611,6 +3623,10 @@ function processRtc(raw, localNow) {
     qpSumRaw: cur.qpSum,
     qpSumDelta: null,
     qpPerDecodedFrame: null,
+    corruptionMeasurementsRaw: cur.corruptionMeasurements,
+    corruptionMeasurementsDelta: null,
+    corruptionProbabilityMean: null,
+    corruptionProbabilityStdDev: null,
     nackCountRaw: cur.nackCount,
     nackCountDelta: null,
     pliCountRaw: cur.pliCount,
@@ -3629,7 +3645,8 @@ function processRtc(raw, localNow) {
     totalPausesDuration: cur.totalPausesDuration,
     freezeCount: cur.freezeCount,
     freezeDelta: null,
-    totalFreezesDuration: cur.totalFreezesDuration,
+    totalFreezesDurationRaw: cur.totalFreezesDuration,
+    freezeDurationDeltaMs: null,
     rttMs: Number.isFinite(raw.candidatePair?.currentRoundTripTime) ? raw.candidatePair.currentRoundTripTime * 1000 : null,
     availableIncomingMbps: Number.isFinite(raw.candidatePair?.availableIncomingBitrate) ? raw.candidatePair.availableIncomingBitrate / 1e6 : null,
     decoderImplementation: r.decoderImplementation ?? null,
@@ -3647,8 +3664,8 @@ function processRtc(raw, localNow) {
       const decFramesDelta = cur.framesDecoded - prev.framesDecoded;
       const recvPacketsDelta = cur.packetsReceived - prev.packetsReceived;
       const lostDelta = cur.packetsLost - prev.packetsLost;
-      if (recvFramesDelta >= 0) out.receivedFPS = recvFramesDelta / dt;
-      if (decFramesDelta >= 0) out.decodedFPS = decFramesDelta / dt;
+      if (recvFramesDelta >= 0) { out.receivedFPS = recvFramesDelta / dt; out.framesReceivedDelta = recvFramesDelta; }
+      if (decFramesDelta >= 0) { out.decodedFPS = decFramesDelta / dt; out.framesDecodedDelta = decFramesDelta; }
       out.packetsReceivedDelta = recvPacketsDelta >= 0 ? recvPacketsDelta : null;
       out.packetsLostDelta = lostDelta >= 0 ? lostDelta : null;
       const packetTotal = Math.max(0, recvPacketsDelta) + Math.max(0, lostDelta);
@@ -3692,6 +3709,9 @@ function processRtc(raw, localNow) {
 
       const freezeDelta = cur.freezeCount - prev.freezeCount;
       out.freezeDelta = freezeDelta >= 0 ? freezeDelta : null;
+      if (Number.isFinite(cur.totalFreezesDuration) && Number.isFinite(prev.totalFreezesDuration) && cur.totalFreezesDuration >= prev.totalFreezesDuration) {
+        out.freezeDurationDeltaMs = (cur.totalFreezesDuration - prev.totalFreezesDuration) * 1000;
+      }
 
       const decodeDelta = Number.isFinite(cur.totalDecodeTime) && Number.isFinite(prev.totalDecodeTime)
         ? cur.totalDecodeTime - prev.totalDecodeTime : null;
@@ -3734,6 +3754,16 @@ function processRtc(raw, localNow) {
       }
 
       const counterDelta=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)&&a>=b ? a-b : null;
+      out.corruptionMeasurementsDelta=counterDelta(cur.corruptionMeasurements,prev.corruptionMeasurements);
+      if (out.corruptionMeasurementsDelta>0 && Number.isFinite(cur.totalCorruptionProbability) && Number.isFinite(prev.totalCorruptionProbability) && cur.totalCorruptionProbability>=prev.totalCorruptionProbability) {
+        const pDelta=cur.totalCorruptionProbability-prev.totalCorruptionProbability;
+        const meanP=pDelta/out.corruptionMeasurementsDelta;
+        out.corruptionProbabilityMean=meanP;
+        if (Number.isFinite(cur.totalSquaredCorruptionProbability) && Number.isFinite(prev.totalSquaredCorruptionProbability) && cur.totalSquaredCorruptionProbability>=prev.totalSquaredCorruptionProbability) {
+          const sqDelta=cur.totalSquaredCorruptionProbability-prev.totalSquaredCorruptionProbability;
+          out.corruptionProbabilityStdDev=Math.sqrt(Math.max(0,sqDelta/out.corruptionMeasurementsDelta-meanP*meanP));
+        }
+      }
       out.nackCountDelta=counterDelta(cur.nackCount,prev.nackCount);
       out.pliCountDelta=counterDelta(cur.pliCount,prev.pliCount);
       out.firCountDelta=counterDelta(cur.firCount,prev.firCount);
@@ -5100,7 +5130,9 @@ async function sampleOnce() {
     jitterBufferTargetMs: round(rtc?.jitterBufferTargetMs, 3),
     jitterBufferMinimumMs: round(rtc?.jitterBufferMinimumMs, 3),
     framesReceivedRaw: rtc?.framesReceivedRaw ?? null,
+    framesReceivedDelta: rtc?.framesReceivedDelta ?? null,
     framesDecodedRaw: rtc?.framesDecodedRaw ?? null,
+    framesDecodedDelta: rtc?.framesDecodedDelta ?? null,
     framesDroppedRaw: rtc?.framesDroppedRaw ?? null,
     framesDroppedDelta: rtc?.framesDroppedDelta ?? null,
     framesRenderedRaw: rtc?.framesRenderedRaw ?? null,
@@ -5113,6 +5145,10 @@ async function sampleOnce() {
     qpSumRaw: rtc?.qpSumRaw ?? null,
     qpSumDelta: rtc?.qpSumDelta ?? null,
     qpPerDecodedFrame: round(rtc?.qpPerDecodedFrame,4),
+    corruptionMeasurementsRaw: rtc?.corruptionMeasurementsRaw ?? null,
+    corruptionMeasurementsDelta: rtc?.corruptionMeasurementsDelta ?? null,
+    corruptionProbabilityMean: round(rtc?.corruptionProbabilityMean,6),
+    corruptionProbabilityStdDev: round(rtc?.corruptionProbabilityStdDev,6),
     nackCountRaw: rtc?.nackCountRaw ?? null,
     nackCountDelta: rtc?.nackCountDelta ?? null,
     pliCountRaw: rtc?.pliCountRaw ?? null,
@@ -5131,6 +5167,8 @@ async function sampleOnce() {
     totalPausesDuration: rtc?.totalPausesDuration ?? null,
     freezeCount: rtc?.freezeCount ?? null,
     freezeDelta: rtc?.freezeDelta ?? null,
+    totalFreezesDurationRaw: rtc?.totalFreezesDurationRaw ?? null,
+    freezeDurationDeltaMs: round(rtc?.freezeDurationDeltaMs,3),
     decoderImplementation: rtc?.decoderImplementation ?? null,
     powerEfficientDecoder: rtc?.powerEfficientDecoder ?? null,
 
@@ -5450,17 +5488,17 @@ function coreSampleView(s) {
     networkJitterMs:s.networkJitterMs,rttMs:s.rttMs,availableIncomingMbps:s.availableIncomingMbps,
     packetsReceivedDelta:s.packetsReceivedDelta,packetsLostDelta:s.packetsLostDelta,packetsLostRaw:s.packetsLostRaw,packetLossPercent:s.packetLossPercent,
     packetsDiscardedRaw:s.packetsDiscardedRaw,jitterBufferMs:s.jitterBufferMs,jitterBufferTargetMs:s.jitterBufferTargetMs,jitterBufferMinimumMs:s.jitterBufferMinimumMs,
-    framesReceivedRaw:s.framesReceivedRaw,framesDecodedRaw:s.framesDecodedRaw,framesDroppedRaw:s.framesDroppedRaw,framesDroppedDelta:s.framesDroppedDelta,
+    framesReceivedRaw:s.framesReceivedRaw,framesReceivedDelta:s.framesReceivedDelta,framesDecodedRaw:s.framesDecodedRaw,framesDecodedDelta:s.framesDecodedDelta,framesDroppedRaw:s.framesDroppedRaw,framesDroppedDelta:s.framesDroppedDelta,
     framesRenderedRaw:s.framesRenderedRaw,framesRenderedDelta:s.framesRenderedDelta,renderedFPSFromStats:s.renderedFPSFromStats,
     decodeTimePerFrameMs:s.decodeTimePerFrameMs,processingDelayPerFrameMs:s.processingDelayPerFrameMs,
     renderInterFrameMeanMs:s.renderInterFrameMeanMs,renderInterFrameStdDevMs:s.renderInterFrameStdDevMs,
-    qpSumRaw:s.qpSumRaw,qpSumDelta:s.qpSumDelta,qpPerDecodedFrame:s.qpPerDecodedFrame,
+    qpSumRaw:s.qpSumRaw,qpSumDelta:s.qpSumDelta,qpPerDecodedFrame:s.qpPerDecodedFrame,corruptionMeasurementsRaw:s.corruptionMeasurementsRaw,corruptionMeasurementsDelta:s.corruptionMeasurementsDelta,corruptionProbabilityMean:s.corruptionProbabilityMean,corruptionProbabilityStdDev:s.corruptionProbabilityStdDev,
     nackCountRaw:s.nackCountRaw,nackCountDelta:s.nackCountDelta,pliCountRaw:s.pliCountRaw,pliCountDelta:s.pliCountDelta,firCountRaw:s.firCountRaw,firCountDelta:s.firCountDelta,
     retransmittedPacketsReceivedRaw:s.retransmittedPacketsReceivedRaw,retransmittedPacketsReceivedDelta:s.retransmittedPacketsReceivedDelta,
     retransmittedBytesReceivedRaw:s.retransmittedBytesReceivedRaw,retransmittedBytesReceivedDelta:s.retransmittedBytesReceivedDelta,
     framesAssembledFromMultiplePacketsRaw:s.framesAssembledFromMultiplePacketsRaw,framesAssembledFromMultiplePacketsDelta:s.framesAssembledFromMultiplePacketsDelta,
     assemblyTimePerMultiPacketFrameMs:s.assemblyTimePerMultiPacketFrameMs,pauseCountRaw:s.pauseCountRaw,pauseCountDelta:s.pauseCountDelta,totalPausesDuration:s.totalPausesDuration,
-    freezeCount:s.freezeCount,freezeDelta:s.freezeDelta,
+    freezeCount:s.freezeCount,freezeDelta:s.freezeDelta,totalFreezesDurationRaw:s.totalFreezesDurationRaw,freezeDurationDeltaMs:s.freezeDurationDeltaMs,
     controlRequestedFps:s.controlRequestedFps,clientTargetFps:s.targetFps,clientTargetFpsSource:s.targetFpsSource,
     requestedBitrateMbps:s.targetBitrateMbps,bitrateAuto:s.bitrateAuto,resolutionMode:s.resolutionMode,receiverHints:s.receiverHints,
     suiteCycleWallMs:s.suiteCycleWallMs,suiteLocalWorkMs:s.suiteLocalWorkMs,suiteBridgeStatsWallMs:s.suiteBridgeStatsWallMs,
@@ -5556,13 +5594,106 @@ function buildImageTelemetryStatistics(samples) {
 function imageTelemetryAvailability(samples) {
   const keys=[
     'playbackTotalVideoFramesRaw','framesRenderedRaw','renderInterFrameMeanMs','qpSumRaw','nackCountRaw','pliCountRaw','firCountRaw',
-    'processingDelayPerFrameMs','retransmittedPacketsReceivedRaw','framesAssembledFromMultiplePacketsRaw'
+    'processingDelayPerFrameMs','retransmittedPacketsReceivedRaw','framesAssembledFromMultiplePacketsRaw','corruptionMeasurementsRaw','corruptionProbabilityMean'
   ];
   const out={};
   for (const key of keys) out[key]=samples.some(s=>s[key]!==null&&s[key]!==undefined);
   out.receiverTrackSettings=!!S.contextLatest?.receiverTrackSettings;
   out.objectFit=samples.some(s=>typeof s.objectFit==='string'&&s.objectFit.length>0);
   return out;
+}
+
+// -----------------------------------------------------------------------------
+// IMAGE LAB FEATURE LAYER 0.1 - EXPORT-ONLY DERIVATION (RC17)
+// Derived quality features are computed only when the user exports the log.
+// The 1 Hz gameplay sampler performs no feature-model pass, no pixel capture,
+// no canvas readback, no ML and no additional RTC getStats() call.
+// -----------------------------------------------------------------------------
+function buildImageFeatureLayer(samples) {
+  const started=now();
+  const eligible=samples.filter(s=>s.measurementEligible!==false && (s.streamActive || Number.isFinite(s.bitrateMbps)));
+  const finite=(v)=>Number.isFinite(v)?v:null;
+  const ratio=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)&&a>=0&&b>0?a/b:null;
+  const rows=[];
+
+  for (const s of eligible) {
+    const res=s.inboundResolution || s.inboundFramePx || null;
+    const width=Number(res?.width),height=Number(res?.height);
+    const pixels=width>0&&height>0 ? width*height : null;
+    const fps=Number.isFinite(s.decodedFPS)&&s.decodedFPS>0 ? s.decodedFPS : (Number.isFinite(s.rtcFPS)&&s.rtcFPS>0?s.rtcFPS:null);
+    const frameBudgetMs=Number.isFinite(fps)&&fps>0 ? 1000/fps : null;
+    const bitrateBps=Number.isFinite(s.bitrateMbps)&&s.bitrateMbps>=0 ? s.bitrateMbps*1e6 : null;
+    const bitsPerPixelFrame=Number.isFinite(bitrateBps)&&pixels>0&&fps>0 ? bitrateBps/(pixels*fps) : null;
+    const directVideoDensity=s.bitrateScope==='VIDEO' && s.bitrateConfidence==='DIRECT_COUNTER' ? bitsPerPixelFrame : null;
+    const retransPacketRatio=ratio(s.retransmittedPacketsReceivedDelta,s.packetsReceivedDelta);
+    const frameDropRatio=ratio(s.framesDroppedDelta,s.framesReceivedDelta);
+    const nackPerK=Number.isFinite(s.nackCountDelta)&&Number.isFinite(s.framesDecodedDelta)&&s.framesDecodedDelta>0 ? s.nackCountDelta/s.framesDecodedDelta*1000 : null;
+    const pliPerK=Number.isFinite(s.pliCountDelta)&&Number.isFinite(s.framesDecodedDelta)&&s.framesDecodedDelta>0 ? s.pliCountDelta/s.framesDecodedDelta*1000 : null;
+    const firPerK=Number.isFinite(s.firCountDelta)&&Number.isFinite(s.framesDecodedDelta)&&s.framesDecodedDelta>0 ? s.firCountDelta/s.framesDecodedDelta*1000 : null;
+    const decodeBudgetRatio=ratio(s.decodeTimePerFrameMs,frameBudgetMs);
+    const processingBudgetRatio=ratio(s.processingDelayPerFrameMs,frameBudgetMs);
+    const jitterExcess=Number.isFinite(s.jitterBufferMs)&&Number.isFinite(s.jitterBufferMinimumMs) ? Math.max(0,s.jitterBufferMs-s.jitterBufferMinimumMs) : null;
+    const jitterTargetExcess=Number.isFinite(s.jitterBufferTargetMs)&&Number.isFinite(s.jitterBufferMinimumMs) ? Math.max(0,s.jitterBufferTargetMs-s.jitterBufferMinimumMs) : null;
+    const box=s.elementBoxCssPx || s.renderedResolution || null;
+    const boxArea=Number(box?.width)>0&&Number(box?.height)>0 ? Number(box.width)*Number(box.height) : null;
+    const surfaceAreaRatio=Number.isFinite(boxArea)&&pixels>0 ? boxArea/pixels : null;
+
+    rows.push({
+      t:s.t,phase:s.phase,codec:s.codec||null,inboundResolution:res,
+      decodedFPS:finite(s.decodedFPS),frameBudgetMs:round(frameBudgetMs,4),
+      bitrateMbps:finite(s.bitrateMbps),bitrateScope:s.bitrateScope||null,bitrateConfidence:s.bitrateConfidence||null,
+      observedBitsPerPixelFrame:round(bitsPerPixelFrame,8),directVideoBitsPerPixelFrame:round(directVideoDensity,8),
+      retransmittedPacketRatio:round(retransPacketRatio,6),frameDropRatio:round(frameDropRatio,6),
+      nackPerThousandDecodedFrames:round(nackPerK,4),pliPerThousandDecodedFrames:round(pliPerK,4),firPerThousandDecodedFrames:round(firPerK,4),
+      decodeBudgetRatio:round(decodeBudgetRatio,6),processingBudgetRatio:round(processingBudgetRatio,6),
+      jitterBufferExcessMs:round(jitterExcess,4),jitterBufferTargetExcessMs:round(jitterTargetExcess,4),
+      surfaceScaleX:finite(s.elementBoxToIntrinsicScaleX),surfaceScaleY:finite(s.elementBoxToIntrinsicScaleY),surfaceAreaRatio:round(surfaceAreaRatio,6),
+      freezeDelta:finite(s.freezeDelta),freezeDurationDeltaMs:finite(s.freezeDurationDeltaMs),
+      corruptionMeasurementsDelta:finite(s.corruptionMeasurementsDelta),corruptionProbabilityMean:finite(s.corruptionProbabilityMean),corruptionProbabilityStdDev:finite(s.corruptionProbabilityStdDev)
+    });
+  }
+
+  const col=key=>rows.map(r=>r[key]).filter(Number.isFinite);
+  return {
+    schemaVersion:1,
+    stage:'FEATURE_LAYER_0.1',
+    computation:'EXPORT_ONLY',
+    runtimeFeaturePass:false,
+    runtimePixelAnalysis:false,
+    runtimeMachineLearning:false,
+    extraGetStatsCallsPerSample:0,
+    sampleCount:rows.length,
+    buildWallMs:round(now()-started,3),
+    principles:{
+      metricIsNotDiagnosis:true,
+      bitrateIsContextual:true,
+      requestedNotEqualAchieved:true,
+      sameLabBrowserCodecBaselineRequiredForFutureThresholds:true
+    },
+    semantics:{
+      observedBitsPerPixelFrame:'Observed bitrate divided by decoded/RTC frame rate and inbound pixels; scope/confidence must be read with the value.',
+      directVideoBitsPerPixelFrame:'Same density only when bitrate source is a direct VIDEO counter; preferred coding-density feature.',
+      retransmittedPacketRatio:'delta retransmittedPacketsReceived / delta packetsReceived; repair-load signal, not a standalone network diagnosis.',
+      frameDropRatio:'delta framesDropped / delta framesReceived.',
+      decodeBudgetRatio:'decode ms per frame / frame budget at observed FPS.',
+      processingBudgetRatio:'receiver totalProcessingDelay per decoded frame / frame budget at observed FPS.',
+      jitterBufferExcessMs:'observed jitter-buffer delay per emitted frame minus minimum delay.',
+      corruptionProbabilityMean:'delta totalCorruptionProbability / delta corruptionMeasurements when exposed by the negotiated WebRTC path.'
+    },
+    statistics:{
+      observedBitsPerPixelFrame:stats(col('observedBitsPerPixelFrame')),
+      directVideoBitsPerPixelFrame:stats(col('directVideoBitsPerPixelFrame')),
+      retransmittedPacketRatio:stats(col('retransmittedPacketRatio')),
+      frameDropRatio:stats(col('frameDropRatio')),
+      nackPerThousandDecodedFrames:stats(col('nackPerThousandDecodedFrames')),
+      decodeBudgetRatio:stats(col('decodeBudgetRatio')),
+      processingBudgetRatio:stats(col('processingBudgetRatio')),
+      jitterBufferExcessMs:stats(col('jitterBufferExcessMs')),
+      surfaceAreaRatio:stats(col('surfaceAreaRatio')),
+      corruptionProbabilityMean:stats(col('corruptionProbabilityMean'))
+    },
+    samples:rows
+  };
 }
 
 function buildLongSessionStatistics() {
@@ -5619,6 +5750,7 @@ function buildExport() {
   const deepStats=buildDeepStatistics(samples);
   const imageStats=buildImageTelemetryStatistics(samples);
   const imageAvailability=imageTelemetryAvailability(samples);
+  const imageFeatureLayer=buildImageFeatureLayer(samples);
   const guard=observerHealth(samples);
   const longSessionCheckpoints=S.longSession.checkpoints.toArray();
   const longSessionStats=buildLongSessionStatistics();
@@ -5628,7 +5760,7 @@ function buildExport() {
       name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,
       pipeline:'Gate -1 -> Gate 0 -> Observe -> Prove -> Modify -> Measure -> Compare -> Integrate',
       schemaVersion:2,
-      status:'V0.8.1_RC15__DIRECT_COMPATIBILITY_GUARD_BYPASS__NOT_CANONICAL'
+      status:'V0.8.1_RC17__IMAGE_LAB_FEATURE_LAYER_0_1__STATIC_CANDIDATE__NOT_CANONICAL'
     },
     exportedAt:new Date().toISOString(),
     environment:ENV,
@@ -5709,10 +5841,12 @@ function buildExport() {
         qpPerDecodedFrame:'delta qpSum / delta framesDecoded; codec/context-relative trend only',
         renderedFPSFromStats:'delta RTCInboundRtpStreamStats.framesRendered / stats time when exposed',
         playbackDropPercent:'delta droppedVideoFrames / delta totalVideoFrames; corroborating signal pending live WebRTC validation',
-        processingDelayPerFrameMs:'delta totalProcessingDelay / delta framesDecoded when exposed'
+        processingDelayPerFrameMs:'delta totalProcessingDelay / delta framesDecoded when exposed',
+        corruptionProbabilityMean:'delta totalCorruptionProbability / delta corruptionMeasurements when the negotiated Chromium/WebRTC path exposes corruption scoring'
       },
       statistics:imageStats
     },
+    imageFeatureLayer,
     longSessionTelemetry:{
       schemaVersion:2,
       observationalOnly:true,
@@ -5758,7 +5892,7 @@ function buildExport() {
       },
       deep:deepPerformanceSnapshot(),
       export:{...S.exportPerf},
-      note:'CORE localWorkMs excludes asynchronous waits. DEEP callback cost is measured separately inside the on-demand rVFC callback.'
+      note:'CORE localWorkMs excludes asynchronous waits. DEEP callback cost is measured separately inside the on-demand rVFC callback. Image Feature Layer 0.1 derives features only during export and adds no gameplay-time feature pass.'
     },
     experiments:{
       lab:S.lab,
@@ -5782,7 +5916,7 @@ function buildExport() {
       pageMethodOverrides:S.control.state==='ACTIVE' && (S.control.application?.patch?.patched||S.control.application?.patched) ? ['StreamDeviceContext.getSafeResolution','SessionHandler.getWindowResolution'] : [],
       exposedStateMutations:S.control.state==='ACTIVE' && S.control.activeTarget ? ['SYSTEM_STATS.USER_DEVICE_RESOLUTION'] : [],
       controlModel:'PERSISTENT_AUTO_APPLY',
-      telemetryIntegrityModel:'RC16_IMMERSIVE_V2_NATIVE_FIRST_PLUS_INPUT_STATE_GUARDIAN_PLUS_RC15_CHORD_FIX',
+      telemetryIntegrityModel:'RC17_IMAGE_FEATURE_LAYER_EXPORT_ONLY_PLUS_RC16_IMMERSIVE_V2_PLUS_AUTO_INTEGRATED_RC15_CHORD_FIX',
       legacyNamingNote:'oneShot/PENDING_RESOLUTION_ONE_SHOT names are active persistent-profile boot context compatibility, not removable dead code',
       longSessionTelemetry:'bounded 1-minute checkpoints + origin-scoped IndexedDB crash recovery; no extra RTC getStats calls',
       telemetryIntegrity:{
@@ -5806,13 +5940,14 @@ function buildExport() {
         mouseTransportOverride:false
       },
       mouseChordCompatibilityFix:{
-        manualFixGate:true,offByDefault:true,pageContextHookInstalledAtDocumentStart:true,
-        listenerScope:'Boosteroid getMouseButtonEvent mousedown/up only',
+        manualFixGate:false,offByDefault:false,autoIntegratedOnValidatedLabB:true,killSwitchAvailable:true,pageContextHookInstalledAtDocumentStart:true,
+        listenerScope:'Direct EventHandler.shouldIgnoreMouseCompatibilityEvent guard patch; no event-listener reroute',
         chordCases:['LMB_DOWN_WHILE_RMB','LMB_UP_WHILE_RMB','RMB_DOWN_WHILE_LMB','RMB_UP_WHILE_LMB'],
         nativeCorrectionTarget:'EventHandler.shouldIgnoreMouseCompatibilityEvent -> native getMouseButtonEvent',
         transportProof:'pass-through WebSocket.send + ClientDataChannel.send metadata only',
         payloadMutation:false,idCmdFabrication:false,additionalTransportSend:false,rawPayloadCapture:false,syntheticDomEventDispatch:false
       },
+      imageFeatureLayer:{stage:'0.1',computation:'EXPORT_ONLY',extraGetStatsCallsPerSample:0,pixelCapture:false,canvasReadback:false,machineLearningRuntime:false},
       immersiveGameMode:{
         userTriggered:true,
         fullscreenOwnershipAware:true,
@@ -6183,17 +6318,18 @@ function waitForBody() {
 
 function boot() {
   installMouseChordFixPage();
+  if (shouldAutoEnableMouseChordFix()) setMouseChordFixEnabled(true,'AUTO_INTEGRATED_LAB_B');
   installPageBridge();
   addEvent('SUITE_BOOT',{
     version:VERSION,
     build:BUILD,
-    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC15_CHORD_FIX__RC16_IMMERSIVE_V2_NATIVE_FIRST',
+    architecture:'LEAN_PAGE_BRIDGE__PERSISTENT_AUTO_PROFILE__FROZEN_STREAM_CONTROL__CORE_DEEP_TELEMETRY__RC17_IMAGE_FEATURE_EXPORT_ONLY__RC15_CHORD_FIX_AUTO__RC16_IMMERSIVE_V2_NATIVE_FIRST',
     controlModel:'PERSISTENT_AUTO_APPLY',
     profileEnabled:isAutoEnabled(),
     bootBehavior:isAutoEnabled() ? 'AUTO_APPLY_ENABLED' : 'SAFE',
     environment:{browser:ENV.browser,likelyPlatform:ENV.likelyPlatform},
     inputCompatibility:{probeEnabled:false,keyboardLock:CAP.input.keyboardLock,pointerEvents:CAP.input.pointer,pointerLock:CAP.input.pointerLock},
-    mouseChordCompatibilityFix:{enabled:false,manualGate:true,offByDefault:true,exactChordCasesOnly:true,nativeHandlerReroute:true,payloadMutation:false,idCmdFabrication:false,additionalTransportSend:false,syntheticDomEventDispatch:false,dualTransportMetadataProof:true},
+    mouseChordCompatibilityFix:{enabled:shouldAutoEnableMouseChordFix(),manualGate:false,offByDefault:false,autoIntegratedOnValidatedLabB:true,exactChordCasesOnly:true,nativeHandlerReroute:false,payloadMutation:false,idCmdFabrication:false,additionalTransportSend:false,syntheticDomEventDispatch:false,dualTransportMetadataProof:true},
     immersiveGameMode:{enabled:false,userTriggered:true,nativeFirst:true,fullscreen:CAP.display.fullscreen,keyboardLock:CAP.input.keyboardLock,pointerLock:CAP.input.pointerLock,pointerLockStrategy:'BOOSTEROID_CURSOR_MODE_MANAGER',inputStateGuardian:true,periodicStateResend:false,exitChord:IMMERSIVE_EXIT_CHORD_LABEL}
   });
   if (isAutoEnabled()) {
