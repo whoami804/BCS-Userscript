@@ -12,46 +12,36 @@ Abra essa URL no navegador em que o Tampermonkey está instalado e confirme **In
 
 ## Beta publicada
 
-- runtime: `v0.8.1-rc15 — Direct Compatibility Guard Bypass + Immersive Game Mode + Telemetry Integrity`;
-- status: `STATIC PASS / TARGETED DIRECT-GUARD-BYPASS + NATIVE DUAL-TRANSPORT SMOKE PASS / LAB-B LIVE PENDING / NOT CANONICAL`;
-- engineering SHA-256: `621205bb9a355ee1db873dd83a1c111d8c0525a9fc31eef763dde553934089d7`;
-- public distribution SHA-256: `5b0026ead25671d4c95e0b3ec02b5c7b9fdd39347d539254029d6981495a820b`.
+- runtime: `v0.8.1-rc16 — Immersive v2 Native-First + Input State Guardian + RC15 Chord Fix`;
+- status: `STATIC PASS / TARGETED IMMERSIVE V2 NATIVE-FIRST + GUARDIAN SMOKE PASS / LAB-B LIVE PENDING / NOT CANONICAL`;
+- engineering SHA-256: `70fb770495c3a35afa1fec2b01d2ba942b830832d549b86e060fe65b8d113686`;
+- public distribution SHA-256: `d079b13b6301e60ae7c22cc9e9ddbc30e8ea7fa26ade9c9a29c300880c51057c`;
+- public Git blob: `bd106803dfd97c83ef82360271416b23710200e2`;
+- workflow `Publish beta userscript` run #27 / id `33351738015`: SUCCESS.
 
-## Por que a RC14 foi descartada
+## H-014C — simultaneous LMB/RMB
 
-O snapshot completo do cliente confirmou que `handlePointerMouseButtonEvent()` chama `suppressMouseCompatibilityEvents()` e renova a janela de supressão de 500 ms. A RC14 reroteava o segundo botão por esse handler e, no LIVE, isso alterou o próprio estado de compatibilidade: o tiro não funcionava enquanto RMB estava fisicamente segurado e o estado de mira podia permanecer preso até a atividade cessar.
+**RC15 LIVE PASS.** O caso real `RMB segurado + LMB disparando` funcionou normalmente no LAB-B. O log registrou 32 chord edges corrigidos, 32/32 pares WebSocket + ClientDataChannel com o mesmo `id_cmd`, zero mismatch, zero par incompleto e classificação `NATIVE_DUAL_TRANSPORT_CONFIRMED`.
 
-## O que muda na RC15
+A correção preservada na RC16 atua somente em `EventHandler.shouldIgnoreMouseCompatibilityEvent` para os quatro edges chorded reais. Não fabrica `id_cmd`, não altera payload, não injeta send extra, não sintetiza DOM input e não renova a janela de supressão de 500 ms pelo fix.
 
-A RC15 remove completamente o reroute para o pointer handler. Em vez disso, envolve apenas `EventHandler.shouldIgnoreMouseCompatibilityEvent` no page context.
+## Immersive v2 — Native-First
 
-O guard original continua sendo executado normalmente. Somente quando ele retornaria `true` para uma das quatro transições chorded reais, a RC15 retorna `false` e permite que o caminho nativo já existente continue:
+A RC16 refatora o Immersive sem reabrir o Stream Control nem o fix RC15:
 
-`getMouseButtonEvent → sendMouseButtonEvent → sendRttEvent → SessionHandler.sendEvents`.
+- fullscreen mobile usa `document.documentElement` como alvo primário;
+- Keyboard Lock de `Escape`/`Tab` continua orquestrado pelo BCS;
+- o BCS não chama mais `requestPointerLock()` diretamente;
+- a captura do mouse fica a cargo do fluxo nativo do Boosteroid / `CursorModeManager` após ação física do usuário;
+- ownership e cleanup continuam preservando estados preexistentes;
+- `Input State Guardian` mantém shadow state local e observa blur/visibility/pagehide;
+- possível input preso é somente diagnosticado; não existe release sintético nem resend periódico.
 
-Casos liberados:
-- `mousedown btn=0 buttons=3`;
-- `mouseup btn=0 buttons=2`;
-- `mousedown btn=2 buttons=3`;
-- `mouseup btn=2 buttons=1`.
+## Gate LIVE RC16
 
-A RC15:
-- não chama `handlePointerMouseButtonEvent` para corrigir chord;
-- não renova a janela de 500 ms pelo fix;
-- não fabrica `id_cmd`;
-- não cria payload manual;
-- não injeta send extra;
-- não despacha eventos DOM sintéticos;
-- mantém compatibility events comuns bloqueados normalmente;
-- observa apenas os pares nativos WebSocket + ClientDataChannel para confirmar o mesmo `id_cmd`.
+`ATUALIZAR → RELOAD COMPLETO → ENTRAR IMERSIVO V2 → clicar fisicamente no jogo para o Boosteroid capturar o mouse → jogar normalmente → testar Esc/Tab → perder/recuperar foco uma vez se conveniente → SAIR → BAIXAR LOG`.
 
-## Gate LIVE RC15
-
-`ATIVAR FIX LMB+RMB → ENTRAR IMERSIVO → segurar RMB + clicar LMB normalmente → soltar RMB enquanto continua alguns cliques LMB → confirmar que a mira solta imediatamente → SAIR → BAIXAR LOG`.
-
-PASS exige comportamento remoto confiável/sincronizado, liberação imediata do botão fisicamente solto e `NATIVE_DUAL_TRANSPORT_CONFIRMED` sem mismatch.
-
-Até o Gate LIVE: **RC15 não é canônica e H-014C ainda não está marcado como corrigido.**
+PASS exige fullscreen/Keyboard Lock normais, captura nativa de mouse funcional, nenhuma regressão do RC15 e saída limpa. Até esse gate, **RC16 é beta e não canônica**.
 
 ## Privacidade
 
