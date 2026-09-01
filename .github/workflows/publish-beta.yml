@@ -3,14 +3,15 @@ name: Publish beta userscript
 on:
   push:
     paths:
-      - 'tools/build-rc18.py'
-      - 'payloads/rc18/**'
+      - 'tools/build-rc19.py'
+      - 'payloads/rc19/**'
       - '.github/workflows/publish-beta.yml'
   pull_request:
     paths:
-      - 'tools/build-rc18.py'
-      - 'payloads/rc18/**'
+      - 'tools/build-rc19.py'
+      - 'payloads/rc19/**'
       - '.github/workflows/publish-beta.yml'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,19 +26,22 @@ jobs:
         with:
           ref: ${{ github.head_ref || github.ref_name }}
 
-      - name: Build and validate beta userscript
+      - name: Build and validate RC19 beta userscript
         shell: bash
         run: |
-          echo 'e077fb5f43a923eef8aca4668386805e941e4521e08e7aa302edfc5c56f26233  control-suite-boosteroid-beta.user.js' | sha256sum -c -
-          python tools/build-rc18.py /tmp/beta-next.user.js
-          echo '030081a953990a1c66276fee272be3dd35f1b4d45f21dfd4682be5905f355b9a  /tmp/beta-next.user.js' | sha256sum -c -
+          set -euo pipefail
+          python tools/build-rc19.py /tmp/beta-next.user.js
+          echo 'b4a27b7484da91fb4c4878906fb75a798fed368658d9db7dbd927e469dc8d7ad  /tmp/beta-next.user.js' | sha256sum -c -
           node --check /tmp/beta-next.user.js
-          grep -q '^// @version      0.8.1-rc18$' /tmp/beta-next.user.js
+          grep -q '^// @version      0.8.1-rc19$' /tmp/beta-next.user.js
+          grep -q '^// @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js$' /tmp/beta-next.user.js
+          grep -q 'H014D_NATIVE_RAF_SCHEDULING_FIX' /tmp/beta-next.user.js
           mv /tmp/beta-next.user.js control-suite-boosteroid-beta.user.js
 
       - name: Publish fixed beta URL
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add control-suite-boosteroid-beta.user.js
@@ -45,5 +49,5 @@ jobs:
             echo 'No distribution change.'
             exit 0
           fi
-          git commit -m 'Publish v0.8.1-rc18 beta userscript'
+          git commit -m 'Publish v0.8.1-rc19 beta userscript'
           git push origin HEAD:${{ github.head_ref || github.ref_name }}
