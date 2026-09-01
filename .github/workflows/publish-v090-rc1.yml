@@ -1,0 +1,53 @@
+name: Publish v0.9.0-rc1 beta
+
+on:
+  push:
+    paths:
+      - 'payloads/v090-rc1/public-rc19_to_v090rc1.patch.gz.b64'
+      - '.github/workflows/publish-v090-rc1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Rebuild beta from verified public RC19
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$GITHUB_WORKSPACE/control-suite-boosteroid-beta.user.js"
+          echo 'b4a27b7484da91fb4c4878906fb75a798fed368658d9db7dbd927e469dc8d7ad  '"$BASE" | sha256sum -c -
+
+          base64 -d "$GITHUB_WORKSPACE/payloads/v090-rc1/public-rc19_to_v090rc1.patch.gz.b64" | gunzip -c > /tmp/public-rc19_to_v090rc1.patch
+          cp "$BASE" /tmp/control-suite-boosteroid-beta.user.js
+          cd /tmp
+          patch -p0 < /tmp/public-rc19_to_v090rc1.patch
+          echo '42d7cbe4749994f35505e37a3304901f668d9bdf2a4c10374e94b926c2c08a7f  /tmp/control-suite-boosteroid-beta.user.js' | sha256sum -c -
+          node --check /tmp/control-suite-boosteroid-beta.user.js
+          grep -q '^// @version      0.9.0-rc1$' /tmp/control-suite-boosteroid-beta.user.js
+          grep -q '^// @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js$' /tmp/control-suite-boosteroid-beta.user.js
+
+          mv /tmp/control-suite-boosteroid-beta.user.js "$GITHUB_WORKSPACE/control-suite-boosteroid-beta.user.js"
+
+      - name: Commit public beta
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add control-suite-boosteroid-beta.user.js
+          if git diff --cached --quiet; then
+            echo 'Public beta already synchronized.'
+            exit 0
+          fi
+          git commit -m 'Publish v0.9.0-rc1 Product UI Integration'
+          git push origin HEAD:${{ github.ref_name }}
