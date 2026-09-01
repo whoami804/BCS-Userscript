@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc18
-// @description  Play-First pruning candidate: lean gameplay runtime, Immersive v2 and minimal H-014C fix, compact support telemetry.
+// @version      0.8.1-rc19
+// @description  Play-First integration candidate: RC18 lean runtime + H-014D native-sender mouse scheduling fix.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc18';
-const BUILD = 'Play-First Runtime Pruning + Immersive v2 + Minimal H-014C Fix - RC18';
+const VERSION = '0.8.1-rc19';
+const BUILD = 'Play-First Runtime Pruning + Immersive v2 + H-014C + H-014D Scheduling Fix - RC19';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 15000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -29,6 +29,8 @@ const MAX_SAMPLES = 900;
 const MAX_IMPORTANT_EVENTS = 180;
 const CHORD_FIX_CONTROL_EVENT = '__BCS_RC15_CHORDED_MOUSE_FIX_CONTROL__';
 const CHORD_FIX_OBS_EVENT = '__BCS_RC15_CHORDED_MOUSE_FIX_OBS__';
+const MOTION_FIX_CONTROL_EVENT = '__BCS_RC19_MOUSE_SCHED_FIX_CONTROL__';
+const MOTION_FIX_OBS_EVENT = '__BCS_RC19_MOUSE_SCHED_FIX_OBS__';
 const IMMERSIVE_KEY_CODES = Object.freeze(['Escape','Tab']);
 const IMMERSIVE_EXIT_CHORD = Object.freeze({ code:'Escape', ctrlKey:true, altKey:true, shiftKey:true });
 const IMMERSIVE_EXIT_CHORD_LABEL = 'Ctrl+Alt+Shift+Esc';
@@ -273,7 +275,8 @@ const IMPORTANT_EVENT_TYPES = new Set([
   'FREEZE_CHANGE','CODEC_CHANGE','INBOUND_RESOLUTION_CHANGE','PEER_CONNECTION_STATE','BITRATE_SOURCE_CHANGE','RESOLUTION_PROOF_STATUS',
   'MEASUREMENT_REANCHOR','VISIBILITY_CHANGE','SAMPLER_ERROR','BRIDGE_INSTALL_ERROR',
   'IMMERSIVE_ENTER','IMMERSIVE_EXIT','IMMERSIVE_FULLSCREEN_CHANGE','IMMERSIVE_POINTER_LOCK_CHANGE','IMMERSIVE_LOCK_ERROR','IMMERSIVE_NATIVE_POINTER_ARMED','IMMERSIVE_NATIVE_POINTER_ACQUIRED',
-  'H014C_FIX_ENABLED','H014C_FIX_DISABLED','H014C_FIX_ERROR','H014C_FIX_PATCHED','EXPORT'
+  'H014C_FIX_ENABLED','H014C_FIX_DISABLED','H014C_FIX_ERROR','H014C_FIX_PATCHED',
+  'H014D_FIX_ENABLED','H014D_FIX_ERROR','H014D_TARGET_SEEN','EXPORT'
 ]);
 
 function detectEnvironment() {
@@ -374,6 +377,15 @@ const S = {
     guardPatched:false,
     patchAttempts:0,
     patchErrors:0,
+    lastError:null,
+    startedAtSec:null
+  },
+  mouseMotionSchedulingFix: {
+    enabled:false,
+    installed:false,
+    schedulerHooked:false,
+    targetSeen:false,
+    errors:0,
     lastError:null,
     startedAtSec:null
   },
@@ -599,6 +611,143 @@ function mouseChordFixSnapshot(){
     idCmdFabrication:false,
     additionalTransportSend:false,
     syntheticDomEventDispatch:false
+  };
+}
+
+// -----------------------------------------------------------------------------
+// H-014D PRODUCTION FIX - MINIMAL MOUSE SCHEDULING REROUTE
+// LAB-B LIVE proved Boosteroid's requested 8 ms _sendBatchedMouseMove timer
+// executing around p50 27.9 ms and accumulating p50 3 later pointer inputs.
+// Production path changes only that exact scheduling edge to native rAF.
+// The native _sendBatchedMouseMove callback, sender, payload, id_cmd and
+// transports remain entirely owned by Boosteroid.
+// -----------------------------------------------------------------------------
+function syncMouseMotionSchedulingFixState(detail={}) {
+  const F=S.mouseMotionSchedulingFix;
+  if ('enabled' in detail) F.enabled=!!detail.enabled;
+  if ('installed' in detail) F.installed=!!detail.installed;
+  if ('schedulerHooked' in detail) F.schedulerHooked=!!detail.schedulerHooked;
+  if ('targetSeen' in detail) F.targetSeen=!!detail.targetSeen;
+  if (Number.isFinite(detail.errors)) F.errors=detail.errors;
+  if (detail.error) F.lastError=String(detail.error).slice(0,180);
+}
+
+function onMouseMotionSchedulingFixObservation(e) {
+  const d=e?.detail || {};
+  syncMouseMotionSchedulingFixState(d);
+  if (d.kind==='TARGET_SEEN') addEvent('H014D_TARGET_SEEN',{schedulerHooked:!!d.schedulerHooked});
+  if (d.kind==='ERROR') addEvent('H014D_FIX_ERROR',{error:d.error||'UNKNOWN'});
+}
+
+function dispatchMouseMotionSchedulingFixControl(detail) {
+  try { document.dispatchEvent(new CustomEvent(MOTION_FIX_CONTROL_EVENT,{detail})); return true; }
+  catch (e) { S.mouseMotionSchedulingFix.lastError=String(e?.message||e).slice(0,180); return false; }
+}
+
+function installMouseMotionSchedulingFixPage(){
+  document.addEventListener(MOTION_FIX_OBS_EVENT,onMouseMotionSchedulingFixObservation,true);
+  const source=`(() => {
+'use strict';
+if(window.__BCS_H014D_SCHEDULING_FIX_RC19__) return;
+window.__BCS_H014D_SCHEDULING_FIX_RC19__=true;
+const CONTROL=${JSON.stringify(MOTION_FIX_CONTROL_EVENT)};
+const OBS=${JSON.stringify(MOTION_FIX_OBS_EVENT)};
+const state={enabled:false,installed:true,schedulerHooked:false,targetSeen:false,errors:0,error:null};
+const originalSetTimeout=window.setTimeout;
+const originalClearTimeout=window.clearTimeout;
+const nativeRAF=window.requestAnimationFrame.bind(window);
+const nativeCancelRAF=window.cancelAnimationFrame.bind(window);
+const pending=new Map();
+const callbackCache=new WeakMap();
+let fakeHandle=-2000000;
+function emit(kind){try{document.dispatchEvent(new CustomEvent(OBS,{detail:{kind,...state}}));}catch(_){}}
+function isTarget(callback,delay){
+  if(typeof callback!=='function')return false;
+  const d=Number(delay);
+  if(!Number.isFinite(d)||d<6||d>10)return false;
+  if(callbackCache.has(callback))return callbackCache.get(callback);
+  let src='';
+  try{src=Function.prototype.toString.call(callback);}catch(_){}
+  const match=callback.name==='_sendBatchedMouseMove'&&src.includes('EventHandler._mouseMoveTimer = null')&&src.includes('EventHandler._pendingMouseMove');
+  callbackCache.set(callback,match);
+  return match;
+}
+function wrappedSetTimeout(callback,delay,...args){
+  if(!isTarget(callback,delay))return Reflect.apply(originalSetTimeout,this,[callback,delay,...args]);
+  if(!state.targetSeen){state.targetSeen=true;emit('TARGET_SEEN');}
+  if(!state.enabled)return Reflect.apply(originalSetTimeout,this,[callback,delay,...args]);
+  const handle=--fakeHandle;
+  try{
+    const rafId=nativeRAF(()=>{
+      const entry=pending.get(handle);
+      if(!entry)return;
+      pending.delete(handle);
+      try{Reflect.apply(callback,window,args);}catch(err){state.errors++;state.error='CALLBACK:'+String(err?.message||err).slice(0,120);emit('ERROR');throw err;}
+    });
+    pending.set(handle,{rafId});
+    return handle;
+  }catch(err){
+    state.errors++;state.error='RAF_SCHEDULE:'+String(err?.message||err).slice(0,120);emit('ERROR');
+    return Reflect.apply(originalSetTimeout,this,[callback,delay,...args]);
+  }
+}
+function wrappedClearTimeout(handle){
+  const entry=pending.get(handle);
+  if(entry){pending.delete(handle);try{nativeCancelRAF(entry.rafId);}catch(_){}return;}
+  return Reflect.apply(originalClearTimeout,this,[handle]);
+}
+try{
+  window.setTimeout=wrappedSetTimeout;
+  window.clearTimeout=wrappedClearTimeout;
+  state.schedulerHooked=window.setTimeout===wrappedSetTimeout&&window.clearTimeout===wrappedClearTimeout;
+  if(!state.schedulerHooked){state.errors++;state.error='SCHEDULER_ASSIGN_FAILED';emit('ERROR');}
+}catch(err){state.errors++;state.error='INSTALL:'+String(err?.message||err).slice(0,120);emit('ERROR');}
+document.addEventListener(CONTROL,e=>{
+  const d=e?.detail||{};
+  if(d.action==='ENABLE'){state.enabled=true;emit('STATE');}
+  else if(d.action==='DISABLE'){state.enabled=false;emit('STATE');}
+  else if(d.action==='STATE'){emit('STATE');}
+},true);
+emit('READY');
+})();
+//# sourceURL=bcs-h014d-scheduling-fix-rc19.js`;
+  try{const sc=document.createElement('script');sc.textContent=source;(document.documentElement||document.head||document).appendChild(sc);sc.remove();S.mouseMotionSchedulingFix.installed=true;}
+  catch(e){S.mouseMotionSchedulingFix.errors++;S.mouseMotionSchedulingFix.lastError=String(e?.message||e).slice(0,180);addEvent('H014D_FIX_ERROR',{error:S.mouseMotionSchedulingFix.lastError});}
+}
+
+function shouldAutoEnableMouseMotionSchedulingFix(){
+  return S.lab==='LAB-B' && ENV.engine==='Chromium';
+}
+
+function setMouseMotionSchedulingFixEnabled(enabled,reason='BOOT'){
+  const F=S.mouseMotionSchedulingFix;
+  enabled=!!enabled;
+  if(enabled===F.enabled) return;
+  F.enabled=enabled;
+  if(enabled && !Number.isFinite(F.startedAtSec)) F.startedAtSec=round(elapsed(),3);
+  dispatchMouseMotionSchedulingFixControl({action:enabled?'ENABLE':'DISABLE'});
+  addEvent('H014D_FIX_ENABLED',{enabled,reason});
+}
+
+function mouseMotionSchedulingFixSnapshot(){
+  const F=S.mouseMotionSchedulingFix;
+  return {
+    schemaVersion:1,
+    mode:'H014D_NATIVE_RAF_SCHEDULING_FIX',
+    enabled:F.enabled,
+    autoIntegratedOnValidatedLabB:shouldAutoEnableMouseMotionSchedulingFix(),
+    installed:F.installed,
+    schedulerHooked:F.schedulerHooked,
+    targetSeen:F.targetSeen,
+    errors:F.errors,
+    lastError:F.lastError,
+    nativeSenderPreserved:true,
+    websocketHooks:false,
+    rtcHooks:false,
+    directSend:false,
+    payloadMutation:false,
+    idCmdFabrication:false,
+    syntheticInput:false
   };
 }
 
@@ -2004,7 +2153,7 @@ function buildExport() {
   const samples=S.samples.toArray();
   const control=controlSnapshot();
   return {
-    controlSuite:{name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,schemaVersion:3,status:'V0.8.1_RC18__PLAY_FIRST_PRUNING_CANDIDATE__NOT_CANONICAL'},
+    controlSuite:{name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,schemaVersion:3,status:'V0.8.1_RC19__H014D_SCHEDULING_INTEGRATION_CANDIDATE__NOT_CANONICAL'},
     exportedAt:new Date().toISOString(),
     environment:{browser:ENV.browser,engine:ENV.engine,likelyPlatform:ENV.likelyPlatform,deviceClass:ENV.deviceClass,hardwareConcurrency:ENV.hardwareConcurrency,deviceMemory:ENV.deviceMemory,maxTouchPoints:ENV.maxTouchPoints},
     capabilities:minimalCapabilityView(),
@@ -2012,6 +2161,7 @@ function buildExport() {
     control:{requested:{resolutionMode:control.preferenceMode,resolution:control.preferenceTarget,fps:control.fpsRequested,bitrateAuto:control.bitrateAuto,bitrateMbps:control.bitrateRequestedMbps},achieved:{inboundResolution:S.lastInboundResolution,rtcFPS:S.latestSample?.rtcFPS??null,decodedFPS:S.latestSample?.decodedFPS??null,bitrateMbps:S.latestSample?.bitrateMbps??null,codec:S.lastCodec},state:control},
     clientContext:minimalClientContext(),
     mouseChordCompatibilityFix:mouseChordFixSnapshot(),
+    mouseMotionSchedulingFix:mouseMotionSchedulingFixSnapshot(),
     immersiveGameMode:immersiveSnapshot(),
     coreTelemetry:{sampleIntervalMs:SAMPLE_MS,rollingWindowMaxSamples:MAX_SAMPLES,retainedSamples:S.samples.count,overwrittenSamples:Math.max(0,S.samples.total-S.samples.count),statistics:buildCoreStatistics(samples),samples:samples.map(supportSampleView)},
     performanceGuard:{attemptedSamples:S.sampler.samplesAttempted,retainedSamples:S.samples.count,skippedSamples:S.sampler.skipped,bridgeTimeouts:S.sampler.bridgeTimeouts,bridgeErrors:S.bridgeErrors,last:{cycleWallMs:round(S.sampler.lastCycleWallMs,3),localWorkMs:round(S.sampler.lastLocalWorkMs,3),bridgeStatsWallMs:round(S.sampler.lastBridgeStatsWallMs,3),contextWallMs:round(S.sampler.lastContextWallMs,3),uiCostMs:round(S.sampler.lastUiCostMs,3)}},
@@ -2028,7 +2178,7 @@ function downloadJSON() {
   const t=new Date().toISOString().replace(/[:.]/g,'-');
   const lab=String(S.lab||'lab').toLowerCase().replace(/[^a-z0-9_-]+/g,'-');
   const browser=String(ENV.browser||'browser').toLowerCase().replace(/[^a-z0-9_-]+/g,'-');
-  const a=document.createElement('a'); a.href=url; a.download=`control-suite-v081-rc18-${lab}-${browser}-${t}.json`; a.style.display='none';
+  const a=document.createElement('a'); a.href=url; a.download=`control-suite-v081-rc19-${lab}-${browser}-${t}.json`; a.style.display='none';
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),30000);
 }
 
@@ -2125,16 +2275,19 @@ function waitForBody() {
 }
 
 function boot() {
+  installMouseMotionSchedulingFixPage();
+  if (shouldAutoEnableMouseMotionSchedulingFix()) setMouseMotionSchedulingFixEnabled(true,'AUTO_INTEGRATED_LAB_B');
   installMouseChordFixPage();
   if (shouldAutoEnableMouseChordFix()) setMouseChordFixEnabled(true,'AUTO_INTEGRATED_LAB_B');
   installPageBridge();
   addEvent('SUITE_BOOT',{
     version:VERSION,build:BUILD,
-    architecture:'PLAY_FIRST__FROZEN_STREAM_CONTROL__LEAN_CORE_1HZ__IMMERSIVE_V2__H014C_MINIMAL_GUARD__COMPACT_SUPPORT_EXPORT',
+    architecture:'PLAY_FIRST__FROZEN_STREAM_CONTROL__LEAN_CORE_1HZ__IMMERSIVE_V2__H014C_MINIMAL_GUARD__H014D_RAF_SCHEDULING__COMPACT_SUPPORT_EXPORT',
     controlModel:'PERSISTENT_AUTO_APPLY',profileEnabled:isAutoEnabled(),bootBehavior:isAutoEnabled()?'AUTO_APPLY_ENABLED':'SAFE',
     environment:{browser:ENV.browser,likelyPlatform:ENV.likelyPlatform},
     runtimePruning:{inputLab:false,mouseTransportProof:false,longSessionMonitor:false,imageLab:false,surfaceImageLab:false,inputShadowGuardian:false},
     mouseChordCompatibilityFix:{autoIntegrated:shouldAutoEnableMouseChordFix(),mode:'H014C_MINIMAL_GUARD_FIX',transportObservation:false},
+    mouseMotionSchedulingFix:{autoIntegrated:shouldAutoEnableMouseMotionSchedulingFix(),mode:'H014D_NATIVE_RAF_SCHEDULING_FIX',nativeSenderPreserved:true},
     immersiveGameMode:{nativeFirst:true,fullscreen:CAP.display.fullscreen,keyboardLock:CAP.input.keyboardLock,pointerLock:CAP.input.pointerLock,pointerLockStrategy:'BOOSTEROID_CURSOR_MODE_MANAGER',exitChord:IMMERSIVE_EXIT_CHORD_LABEL}
   });
   if (isAutoEnabled()) addEvent('AUTO_PROFILE_BOOT',{resolutionMode:lsGet(K.resolutionMode,'native'),resolutionTarget:resolutionTarget(),fps:Number(lsGet(K.fps,'120'))===60?60:120,bitrateAuto:lsGet(K.bitrateAuto,'true')!=='false',bitrateMbps:lsGet(K.bitrateAuto,'true')!=='false'?null:(Number(lsGet(K.bitrateManual,'0'))||null),streamDocument:IS_STREAM_DOCUMENT});
