@@ -12,73 +12,79 @@ Abra essa URL no navegador com Tampermonkey, confirme **Instalar/Atualizar** e r
 
 ## Beta publicada
 
-- runtime: `v0.8.1-rc19 — Play-First Runtime Pruning + Immersive v2 + H-014C + H-014D Scheduling Fix`;
-- status: `STATIC/BENCH PASS / PUBLIC BETA PUBLISHED / SHORT LAB-B INTEGRATION REGRESSION PENDING / NOT CANONICAL`;
-- engineering SHA-256: `e68755db6fde532082f5ff8d813a0d43c6255da6bcf300202956fbf6f66f959e`;
-- public distribution SHA-256: `b4a27b7484da91fb4c4878906fb75a798fed368658d9db7dbd927e469dc8d7ad`;
-- public Git blob: `c2487fb6c088e31288ede8d9b9321d231580ba94`;
-- workflow `Publish beta userscript` run #32 / id `33461035083`: **SUCCESS**;
-- publish commit: `c238d895e1f05c6e3e2a01c8c0c52e304fc9ca3b`.
+- runtime: `v0.9.0-rc1 — Product UI Integration`;
+- status: `STATIC PASS / PUBLIC BETA PUBLISHED / SHORT LAB-B PRODUCT REGRESSION PENDING / NOT CANONICAL`;
+- engineering SHA-256: `413af8945e5653a72ceac9f0083efb1b51cb525953e2ba6c39fc64723ea2c675`;
+- public distribution SHA-256: `42d7cbe4749994f35505e37a3304901f668d9bdf2a4c10374e94b926c2c08a7f`;
+- public Git blob: `96357dc8cba92e8944749076c58816529ed7cb10`.
 
 ## Direção PLAY-FIRST
 
-O BCS é feito para **jogar melhor no Boosteroid Web mobile**. Instrumentação de laboratório é temporária por padrão e não permanece no runtime só porque foi útil durante uma investigação.
+O BCS é feito para **jogar melhor no Boosteroid Web mobile**. A v0.9 inicia a fase Product Experience: menos passos, linguagem mais simples e controles voltados para a sessão real.
 
-RC18 fez a grande poda de runtime; RC19 mantém essa base e integra somente o mecanismo mínimo de gameplay provado para H-014D.
+A fundação de gameplay v0.8.1/RC19 permanece preservada: Monitor Virtual, FPS/bitrate nativos, H-014C, H-014D Mouse Smoothness, Immersive v2, Page Bridge e monitor CORE leve.
 
-## O que permanece
+## Nova UI v0.9
 
-**Controle**
-- resolução / Monitor Virtual;
-- FPS 60/120;
-- bitrate AUTO/manual;
-- AUTO/SAFE persistente.
+**Controle de Stream**
+- chave ON/OFF;
+- OFF = SAFE;
+- SAFE oculta Resolução/FPS/Bitrate;
+- preferências permanecem salvas;
+- não existe mais botão `ATIVAR AUTO`;
+- não existe mais botão `APLICAR`;
+- mudar uma preferência salva automaticamente o perfil e usa os mecanismos nativos já existentes quando a sessão permite aplicação ao vivo.
 
-**Game Mode**
-- Immersive v2 native-first;
-- Keyboard Lock Escape/Tab;
-- captura de mouse pelo fluxo nativo do Boosteroid;
-- correção LMB+RMB H-014C mínima;
-- H-014D Scheduling Fix no LAB-B/Chromium validado.
+**Stream**
+- Resolução: NATIVO, 1920×1080, 2400×1080, 2532×1170, 2560×1080 e CUSTOM;
+- FPS: 60/120;
+- Bitrate: AUTO/MANUAL;
+- Manual: slider 5–80 Mbps.
 
-**Monitor / suporte**
-- resolução inbound;
-- FPS;
-- bitrate;
+**Jogo**
+- Mouse Smoothness: chave real do H-014D validado;
+- Immersive: botão de tela cheia;
+- Recapturar: aparece apenas com Immersive ativo.
+
+**UI**
+- launcher BCS móvel;
+- launcher discreto/transparente quando ocioso;
+- painel móvel;
+- posição persistida;
+- cards/toggles mobile-first;
+- descrições curtas;
+- apenas `X` para fechar.
+
+**Sessão / suporte**
+- resolução real;
+- FPS real;
+- bitrate observado;
 - codec;
-- RTT/jitter/loss básicos;
-- estado compacto H-014C/H-014D;
-- export JSON enxuto.
+- RTT;
+- export JSON.
 
-## H-014D mouse smoothness
+## H-014D Mouse Smoothness
 
-A investigação encontrou um problema no scheduling do flush de movimento do cliente web: o Boosteroid solicitava `_sendBatchedMouseMove` em 8 ms, mas no LAB-B o callback chegava tipicamente muito depois e acumulava vários movimentos antes do envio.
+H-014D já passou pela cadeia de discovery e integração LIVE no LAB-B/Chromium. A correção altera somente o scheduling do callback nativo auditado `_sendBatchedMouseMove` para native rAF; callback, sender, payload, `id_cmd` e transportes continuam nativos.
 
-O fix validado altera **somente o scheduling desse callback exato** para `requestAnimationFrame`. O callback nativo, sender, payload, `id_cmd` e transportes continuam pertencendo ao Boosteroid.
-
-Em dois testes LIVE, a correção reduziu a mediana do atraso de scheduling de 27,9 ms para 0,5 ms e o usuário relatou ganho claro de fluidez na câmera.
-
-RC19 não inclui a UI nem a instrumentação detalhada usada durante a prova; somente o mecanismo necessário para gameplay e um estado compacto de suporte permanecem.
+A v0.9 apenas fornece uma chave de usuário para habilitar/desabilitar esse mecanismo. Não reintroduz o antigo tooling de laboratório.
 
 ## Segurança arquitetural
 
-H-014D em RC19:
-- não cria pacote de mouse;
-- não fabrica `id_cmd`;
-- não faz send direto;
-- não altera payload;
-- não instala hook de WebSocket/RTC;
-- não gera input sintético;
-- não modifica timers comuns fora do fingerprint auditado.
+A Product UI não adiciona:
+- pacote de mouse fabricado;
+- `id_cmd` fabricado;
+- send direto;
+- payload mutation;
+- WebSocket/RTC hooks;
+- input sintético.
 
-## Gate RC19
+## Gate v0.9.0-rc1
 
-A beta está publicada, mas ainda é candidata.
+Teste curto:
+`remover UI Experiment standalone → atualizar/reload v0.9.0-rc1 → mover launcher/painel → SAFE↔ON → mudar uma preferência sem confirmação → iniciar sessão → Mouse Smoothness OFF↔ON → Immersive/Recapturar → LMB+RMB → jogar 2–3 min → BAIXAR LOG uma vez`.
 
-Teste curto de integração:
-`desativar standalone H-014D → atualizar/reload RC19 → AUTO/resolução/FPS/bitrate → Immersive → confirmar fluidez da câmera → RMB+LMB natural → jogar 2–3 min → abrir/fechar painel → BAIXAR LOG uma vez`.
-
-O objetivo é confirmar que o ganho já provado sobreviveu à integração no script principal sem regressão das funções congeladas. Não é necessário repetir os probes H-014D de 15 segundos.
+Não é necessário repetir probes H-014D de 15 segundos.
 
 ## Privacidade
 
