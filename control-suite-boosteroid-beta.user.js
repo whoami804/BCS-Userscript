@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Control Suite - Boosteroid
 // @namespace    whoami.boosteroid.control-suite
-// @version      0.8.1-rc19
-// @description  Play-First integration candidate: RC18 lean runtime + H-014D native-sender mouse scheduling fix.
+// @version      0.9.0-rc1
+// @description  Product Experience candidate: movable native-style UI + automatic persistent stream profile on the RC19 gameplay foundation.
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/main/control-suite-boosteroid-beta.user.js
@@ -17,8 +17,8 @@
 (() => {
 'use strict';
 
-const VERSION = '0.8.1-rc19';
-const BUILD = 'Play-First Runtime Pruning + Immersive v2 + H-014C + H-014D Scheduling Fix - RC19';
+const VERSION = '0.9.0-rc1';
+const BUILD = 'Product Experience UI + Auto-Persist Stream Profile + RC19 Gameplay Foundation - RC1';
 const SAMPLE_MS = 1000;
 const CONTEXT_MS = 15000;
 const STARTUP_STABLE_SAMPLES = 5;
@@ -42,6 +42,11 @@ const K = {
   lab: 'bcs.lab',
   network: 'bcs.network',
   panelOpen: 'bcs.panelOpen',
+  uiPanelX: 'bcs.ui.panel.x',
+  uiPanelY: 'bcs.ui.panel.y',
+  uiFabX: 'bcs.ui.fab.x',
+  uiFabY: 'bcs.ui.fab.y',
+  mouseSmoothness: 'bcs.input.mouseSmoothness',
   controlEnabled: 'bcs.control.enabled',
   resolutionOneShot: 'bcs.resolution.oneShot',
   resolutionMode: 'bcs.control.resolution.mode',
@@ -98,6 +103,10 @@ function isAutoEnabled() {
   return lsGet(K.controlEnabled, 'false') === 'true';
 }
 
+function mouseSmoothnessPreference() {
+  return lsGet(K.mouseSmoothness, 'true') !== 'false';
+}
+
 function currentPreferenceSnapshot() {
   const mode = lsGet(K.resolutionMode, 'native');
   const target = mode === 'custom'
@@ -119,7 +128,8 @@ function currentPreferenceSnapshot() {
     resolutionTarget: target,
     fps,
     bitrateAuto,
-    bitrateMbps
+    bitrateMbps,
+    mouseSmoothness: mouseSmoothnessPreference()
   };
 }
 
@@ -173,6 +183,8 @@ function importSharedPreferencesEarly() {
     lsSet(K.bitrateH264, mbps);
     lsSet(K.bitrateAV1, mbps);
   }
+
+  if (typeof cfg.mouseSmoothness === 'boolean') lsSet(K.mouseSmoothness, cfg.mouseSmoothness ? 'true' : 'false');
 
   const enabled = cfg.enabled === true;
   lsSet(K.controlEnabled, enabled ? 'true' : 'false');
@@ -2102,6 +2114,95 @@ function startSampler() {
   setTimeout(samplerLoop, 100);
 }
 
+
+// -----------------------------------------------------------------------------
+// PRODUCT EXPERIENCE - AUTOMATIC PROFILE ORCHESTRATION
+// UI intent is immediate: changing a visible stream preference persists it
+// automatically and applies the existing native control path when a stream is
+// already active. No new resolution/FPS/bitrate mechanism is introduced here.
+// -----------------------------------------------------------------------------
+function persistEnabledStreamProfile() {
+  if (!isAutoEnabled()) return saveProfilePreferences();
+  return setAutoEnabled(true);
+}
+
+async function enableStreamProfileFromUI() {
+  setAutoEnabled(true);
+  if (!IS_STREAM_DOCUMENT) {
+    saveProfilePreferences();
+    addEvent('PRODUCT_PROFILE_ENABLED',{streamDocument:false,appliedNow:false});
+    updateUI();
+    return;
+  }
+  if (S.control.state === 'SAFE') armResolutionControl();
+  const fps=Number(lsGet(K.fps,'120'))===60?60:120;
+  const brAuto=lsGet(K.bitrateAuto,'true')!=='false';
+  const brValue=clamp(Number(lsGet(K.bitrateManual,'40'))||40,5,80);
+  const fpsResult=await applyFpsControl(fps,true);
+  const bitrateResult=await applyBitrateControl(brAuto,brValue,true);
+  const resolutionResult=await applyResolutionControl(lsGet(K.resolutionMode,'native'));
+  persistEnabledStreamProfile();
+  addEvent('PRODUCT_PROFILE_ENABLED',{streamDocument:true,appliedNow:true,fpsOk:!!fpsResult?.ok,bitrateOk:!!bitrateResult?.ok,resolutionOk:!!resolutionResult?.ok});
+  updateUI();
+}
+
+async function saveResolutionPreferenceFromUI(mode) {
+  lsSet(K.resolutionMode,mode);
+  S.control.preferenceMode=mode;
+  persistEnabledStreamProfile();
+  if (isAutoEnabled() && IS_STREAM_DOCUMENT) {
+    if (S.control.state === 'SAFE') armResolutionControl();
+    await applyResolutionControl(mode);
+  }
+  addEvent('PRODUCT_PREFERENCE_CHANGE',{control:'resolution',mode,autoPersisted:isAutoEnabled(),liveAttempted:isAutoEnabled()&&IS_STREAM_DOCUMENT});
+  updateUI();
+}
+
+async function saveCustomResolutionFromUI(width,height) {
+  const w=Math.max(320,Math.round(Number(width)||1920));
+  const h=Math.max(240,Math.round(Number(height)||1080));
+  lsSet(K.resolutionW,w); lsSet(K.resolutionH,h); lsSet(K.resolutionMode,'custom');
+  S.control.preferenceMode='custom';
+  persistEnabledStreamProfile();
+  if (isAutoEnabled() && IS_STREAM_DOCUMENT) {
+    if (S.control.state === 'SAFE') armResolutionControl();
+    await applyResolutionControl('custom');
+  }
+  addEvent('PRODUCT_PREFERENCE_CHANGE',{control:'resolution',mode:'custom',width:w,height:h,autoPersisted:isAutoEnabled(),liveAttempted:isAutoEnabled()&&IS_STREAM_DOCUMENT});
+  updateUI();
+}
+
+async function saveFpsPreferenceFromUI(value) {
+  const fps=Number(value)===60?60:120;
+  lsSet(K.fps,fps);
+  persistEnabledStreamProfile();
+  if (isAutoEnabled() && IS_STREAM_DOCUMENT) await applyFpsControl(fps,true);
+  addEvent('PRODUCT_PREFERENCE_CHANGE',{control:'fps',fps,autoPersisted:isAutoEnabled(),liveAttempted:isAutoEnabled()&&IS_STREAM_DOCUMENT});
+  updateUI();
+}
+
+async function saveBitratePreferenceFromUI(auto,value) {
+  const isAuto=!!auto;
+  const mbps=clamp(Math.round(Number(value)||40),5,80);
+  lsSet(K.bitrateAuto,isAuto?'true':'false');
+  if (!isAuto) lsSet(K.bitrateManual,mbps);
+  persistEnabledStreamProfile();
+  if (isAuto) { lsRemove(K.bitrateH264); lsRemove(K.bitrateAV1); }
+  else { lsSet(K.bitrateH264,mbps); lsSet(K.bitrateAV1,mbps); }
+  if (isAutoEnabled() && IS_STREAM_DOCUMENT) await applyBitrateControl(isAuto,mbps,true);
+  addEvent('PRODUCT_PREFERENCE_CHANGE',{control:'bitrate',auto:isAuto,mbps:isAuto?null:mbps,autoPersisted:isAutoEnabled(),liveAttempted:isAutoEnabled()&&IS_STREAM_DOCUMENT});
+  updateUI();
+}
+
+function setMouseSmoothnessPreferenceFromUI(enabled) {
+  const value=!!enabled;
+  lsSet(K.mouseSmoothness,value?'true':'false');
+  saveProfilePreferences();
+  if (shouldAutoEnableMouseMotionSchedulingFix()) setMouseMotionSchedulingFixEnabled(value,'PRODUCT_UI');
+  addEvent('PRODUCT_PREFERENCE_CHANGE',{control:'mouseSmoothness',enabled:value,supported:shouldAutoEnableMouseMotionSchedulingFix()});
+  updateUI();
+}
+
 // -----------------------------------------------------------------------------
 // SUPPORT EXPORT - PLAY-FIRST
 // Compact rolling snapshot; one stringify; exporting does not stop gameplay.
@@ -2153,7 +2254,7 @@ function buildExport() {
   const samples=S.samples.toArray();
   const control=controlSnapshot();
   return {
-    controlSuite:{name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,schemaVersion:3,status:'V0.8.1_RC19__H014D_SCHEDULING_INTEGRATION_CANDIDATE__NOT_CANONICAL'},
+    controlSuite:{name:'Control Suite - Boosteroid',version:VERSION,build:BUILD,schemaVersion:3,status:'V0.9.0_RC1__PRODUCT_UI_INTEGRATION_CANDIDATE__NOT_CANONICAL'},
     exportedAt:new Date().toISOString(),
     environment:{browser:ENV.browser,engine:ENV.engine,likelyPlatform:ENV.likelyPlatform,deviceClass:ENV.deviceClass,hardwareConcurrency:ENV.hardwareConcurrency,deviceMemory:ENV.deviceMemory,maxTouchPoints:ENV.maxTouchPoints},
     capabilities:minimalCapabilityView(),
@@ -2178,95 +2279,183 @@ function downloadJSON() {
   const t=new Date().toISOString().replace(/[:.]/g,'-');
   const lab=String(S.lab||'lab').toLowerCase().replace(/[^a-z0-9_-]+/g,'-');
   const browser=String(ENV.browser||'browser').toLowerCase().replace(/[^a-z0-9_-]+/g,'-');
-  const a=document.createElement('a'); a.href=url; a.download=`control-suite-v081-rc19-${lab}-${browser}-${t}.json`; a.style.display='none';
+  const a=document.createElement('a'); a.href=url; a.download=`control-suite-v090-rc1-${lab}-${browser}-${t}.json`; a.style.display='none';
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),30000);
 }
 
 // -----------------------------------------------------------------------------
-// UI - PLAY-FIRST
-// Main panel = controls used while playing. Support details are collapsed.
+// UI - v0.9 PRODUCT EXPERIENCE RC1
+// Mobile-first settings surface. The user changes a preference once; the BCS
+// persists it automatically. The floating launcher and panel are movable.
 // -----------------------------------------------------------------------------
 function setText(id,value) { const el=$(id); if(!el)return; const v=value==null?'--':String(value); if(el.textContent!==v)el.textContent=v; }
 function fmt(v,digits=1,suffix='') { return Number.isFinite(v)?`${v.toFixed(digits)}${suffix}`:'--'; }
 function formatRes(r) { return r?.width>0&&r?.height>0?`${r.width}×${r.height}`:'--'; }
+function uiNumber(key,fallback=null) {
+  const raw=lsGet(key,null);
+  if(raw==null||raw==='')return fallback;
+  const n=Number(raw);
+  return Number.isFinite(n)?n:fallback;
+}
 
 function setPanel(open) {
   S.ui.open=!!open; lsSet(K.panelOpen,open?'true':'false');
-  const panel=$('bcs-panel'),button=$('bcs-open'); if(panel)panel.style.display=open?'block':'none'; if(button)button.style.display=open?'none':'block';
+  const panel=$('bcs-panel'),button=$('bcs-open');
+  if(panel)panel.style.display=open?'flex':'none';
+  if(button)button.classList.toggle('bcs-open-active',!!open);
   if(open)updateUI();
 }
 
+function setSwitchState(id,on,disabled=false) {
+  const b=$(id); if(!b)return;
+  b.classList.toggle('on',!!on); b.setAttribute('aria-pressed',on?'true':'false'); b.disabled=!!disabled;
+}
+
+function setProductUiPositions() {
+  const panel=$('bcs-panel'),button=$('bcs-open');
+  if(panel){
+    const x=uiNumber(K.uiPanelX,null), y=uiNumber(K.uiPanelY,null);
+    if(Number.isFinite(x)&&Number.isFinite(y)){panel.style.left=`${x}px`;panel.style.top=`${y}px`;panel.style.right='auto';}
+  }
+  if(button){
+    const x=uiNumber(K.uiFabX,null), y=uiNumber(K.uiFabY,null);
+    if(Number.isFinite(x)&&Number.isFinite(y)){button.style.left=`${x}px`;button.style.top=`${y}px`;button.style.right='auto';button.style.bottom='auto';}
+  }
+}
+
+function bindMovableElement(handle,target,xKey,yKey,{allowButtonHandle=false,suppressClickTarget=null}={}) {
+  let active=false,moved=false,sx=0,sy=0,ox=0,oy=0;
+  handle.addEventListener('pointerdown',e=>{
+    if(e.button!==0)return;
+    if(!allowButtonHandle && e.target?.closest?.('button,input,select,textarea,a,[role="button"]'))return;
+    const r=target.getBoundingClientRect(); active=true;moved=false;sx=e.clientX;sy=e.clientY;ox=r.left;oy=r.top;
+    try{handle.setPointerCapture(e.pointerId);}catch{}
+  });
+  handle.addEventListener('pointermove',e=>{
+    if(!active)return;
+    const dx=e.clientX-sx,dy=e.clientY-sy;if(Math.hypot(dx,dy)>4)moved=true;
+    if(!moved)return;
+    const w=target.offsetWidth||50,h=target.offsetHeight||50;
+    const x=clamp(ox+dx,4,Math.max(4,innerWidth-w-4)),y=clamp(oy+dy,4,Math.max(4,innerHeight-h-4));
+    target.style.left=`${Math.round(x)}px`;target.style.top=`${Math.round(y)}px`;target.style.right='auto';target.style.bottom='auto';
+    lsSet(xKey,Math.round(x));lsSet(yKey,Math.round(y));
+  });
+  const end=e=>{
+    if(!active)return;active=false;
+    if(moved&&suppressClickTarget){suppressClickTarget.dataset.suppressClick='1';setTimeout(()=>{if(suppressClickTarget)suppressClickTarget.dataset.suppressClick='0';},260);}
+    try{handle.releasePointerCapture(e.pointerId);}catch{}
+  };
+  handle.addEventListener('pointerup',end);handle.addEventListener('pointercancel',end);
+}
+
+function keepProductUiOnScreen() {
+  const button=$('bcs-open'),panel=$('bcs-panel');
+  if(button){
+    const r=button.getBoundingClientRect();
+    if(r.right<8||r.bottom<8||r.left>innerWidth-8||r.top>innerHeight-8){
+      lsRemove(K.uiFabX);lsRemove(K.uiFabY);button.style.left='auto';button.style.top='auto';button.style.right='12px';button.style.bottom='18px';
+    }
+  }
+  if(panel&&S.ui.open){
+    const r=panel.getBoundingClientRect();
+    const x=clamp(r.left,4,Math.max(4,innerWidth-Math.min(panel.offsetWidth||340,innerWidth-8)-4));
+    const y=clamp(r.top,4,Math.max(4,innerHeight-Math.min(panel.offsetHeight||420,innerHeight-8)-4));
+    panel.style.left=`${Math.round(x)}px`;panel.style.top=`${Math.round(y)}px`;panel.style.right='auto';
+    lsSet(K.uiPanelX,Math.round(x));lsSet(K.uiPanelY,Math.round(y));
+  }
+}
+
 function updateUI(sample=null) {
-  if(!S.ui.built||!S.ui.open)return;
+  if(!S.ui.built)return;
   const s=sample||S.latestSample||{};
-  const auto=isAutoEnabled();
-  setText('bcs-auto-state',auto?'ATIVO':'SAFE');
+  const profileEnabled=isAutoEnabled();
+  const smoothSupported=shouldAutoEnableMouseMotionSchedulingFix();
+  setSwitchState('bcs-profile-toggle',profileEnabled,false);
+  setSwitchState('bcs-smooth-toggle',mouseSmoothnessPreference(),!smoothSupported);
+  const stream=$('bcs-stream-settings');if(stream)stream.style.display=profileEnabled?'block':'none';
+  const safe=$('bcs-safe-message');if(safe)safe.style.display=profileEnabled?'none':'block';
+  setText('bcs-profile-chip',profileEnabled?'ATIVO':'SAFE');
+  setText('bcs-smooth-desc',smoothSupported?'Melhora a fluidez do movimento do mouse.':'Não disponível neste navegador.');
   setText('bcs-codec',(s.codec||'--').replace('video/',''));
   setText('bcs-fps-real',fmt(s.decodedFPS??s.rtcFPS,1));
   setText('bcs-br-real',fmt(s.bitrateMbps,2,' Mbps'));
   setText('bcs-rtt',fmt(s.rttMs,0,' ms'));
   setText('bcs-res-real',formatRes(s.inboundResolution||S.lastInboundResolution));
-  setText('bcs-immersive-state',S.immersive.active?'ATIVO':(S.immersive.entering?'ENTRANDO':'OFF'));
-  setText('bcs-fix-state',S.mouseChordFix.enabled?(S.mouseChordFix.guardPatched?'ATIVO':'ATIVANDO'):'OFF');
-  setText('bcs-error',S.immersive.lastError?`${S.immersive.lastError.stage}: ${S.immersive.lastError.error}`:(S.mouseChordFix.lastError||'--'));
 
-  const fpsSelect=$('bcs-fps-mode'); const fps=Number(lsGet(K.fps,'120'))===60?60:120; if(fpsSelect&&fpsSelect.value!==String(fps))fpsSelect.value=String(fps);
-  const brAuto=lsGet(K.bitrateAuto,'true')!=='false'; const brMode=$('bcs-bitrate-mode'); if(brMode&&brMode.value!==(brAuto?'auto':'manual'))brMode.value=brAuto?'auto':'manual';
-  const brValue=clamp(Number(lsGet(K.bitrateManual,'40'))||40,5,80); const brRange=$('bcs-bitrate-range'); if(brRange&&brRange.value!==String(brValue))brRange.value=String(brValue); setText('bcs-bitrate-value',`${brValue} Mbps`);
-  const brRow=$('bcs-bitrate-row'); if(brRow)brRow.style.display=brAuto?'none':'flex';
-  const resMode=$('bcs-res-mode'); if(resMode&&resMode.value!==lsGet(K.resolutionMode,'native'))resMode.value=lsGet(K.resolutionMode,'native');
-  const custom=$('bcs-custom-row'); if(custom)custom.style.display=lsGet(K.resolutionMode,'native')==='custom'?'flex':'none';
-  const imm=$('bcs-immersive-toggle'); if(imm){imm.disabled=S.immersive.entering||S.immersive.exiting||!IS_STREAM_DOCUMENT;imm.textContent=S.immersive.active?'SAIR DO IMERSIVO':'ENTRAR IMERSIVO';}
-  const autoBtn=$('bcs-start-session'); if(autoBtn)autoBtn.textContent=auto?'AUTO ATIVO':'ATIVAR AUTO';
+  const fpsSelect=$('bcs-fps-mode');const fps=Number(lsGet(K.fps,'120'))===60?60:120;if(fpsSelect&&fpsSelect.value!==String(fps))fpsSelect.value=String(fps);
+  const brAuto=lsGet(K.bitrateAuto,'true')!=='false';const brMode=$('bcs-bitrate-mode');if(brMode&&brMode.value!==(brAuto?'auto':'manual'))brMode.value=brAuto?'auto':'manual';
+  const brValue=clamp(Number(lsGet(K.bitrateManual,'40'))||40,5,80);const brRange=$('bcs-bitrate-range');if(brRange&&brRange.value!==String(brValue))brRange.value=String(brValue);setText('bcs-bitrate-value',`${brValue} Mbps`);
+  const brRow=$('bcs-bitrate-row');if(brRow)brRow.style.display=brAuto?'none':'grid';
+  const resMode=$('bcs-res-mode');if(resMode&&resMode.value!==lsGet(K.resolutionMode,'native'))resMode.value=lsGet(K.resolutionMode,'native');
+  const custom=$('bcs-custom-row');if(custom)custom.style.display=lsGet(K.resolutionMode,'native')==='custom'?'grid':'none';
+  const rw=$('bcs-res-w'),rh=$('bcs-res-h');if(rw)rw.value=lsGet(K.resolutionW,'1920');if(rh)rh.value=lsGet(K.resolutionH,'1080');
+
+  const imm=$('bcs-immersive-toggle');if(imm){imm.disabled=S.immersive.entering||S.immersive.exiting||!IS_STREAM_DOCUMENT;imm.textContent=S.immersive.active?'SAIR DO IMERSIVO':'ATIVAR IMERSIVO';}
+  const retry=$('bcs-immersive-retry');if(retry)retry.style.display=S.immersive.active?'block':'none';
+  const session=$('bcs-session-card');if(session)session.style.display=IS_STREAM_DOCUMENT?'block':'none';
 }
 
 function createUI() {
   if($('bcs-panel'))return;
-  const style=document.createElement('style'); style.id='bcs-style'; style.textContent=`
-#bcs-open,#bcs-panel{position:fixed;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f5f5f7}
-#bcs-open{right:10px;top:max(10px,env(safe-area-inset-top));border:1px solid #3a3a3d;border-radius:12px;background:#171719;color:#fff;padding:9px 11px;font-size:12px;font-weight:850}
-#bcs-panel{right:10px;top:max(10px,env(safe-area-inset-top));width:min(320px,calc(100vw - 20px));max-height:calc(100dvh - 20px);overflow:auto;background:#111113;border:1px solid #343438;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:11px;line-height:1.35}
-#bcs-panel *{box-sizing:border-box}.bcs-head{padding:10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2a2a2d}.bcs-title{font-size:13px;font-weight:900}.bcs-muted{opacity:.6;font-size:9px}.bcs-x{border:0;border-radius:8px;background:#262629;color:#fff;width:30px;height:30px;font-size:18px}.bcs-body{padding:9px}.bcs-card{border:1px solid #29292c;border-radius:10px;margin-bottom:8px;overflow:hidden}.bcs-st{padding:7px 8px;background:#1a1a1d;font-weight:850}.bcs-row{display:flex;justify-content:space-between;gap:10px;padding:6px 8px;border-top:1px solid #232326}.bcs-row b{text-align:right}.bcs-select,.bcs-btn{font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.bcs-select{background:#202023;color:#fff;border:1px solid #3a3a3e;border-radius:7px;padding:5px}.bcs-btn{width:100%;border:1px solid #3a3a3e;border-radius:8px;background:#222225;color:#fff;padding:9px 6px;font-weight:800}.bcs-primary{background:#2b2b31}.bcs-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:7px}.bcs-note{padding:6px 8px;opacity:.62;font-size:9px}.bcs-big{font-size:15px}.bcs-danger{border-color:#804040}.bcs-advanced{margin:8px 0;border:1px solid #29292c;border-radius:10px;padding:7px}.bcs-advanced summary{font-weight:850;cursor:pointer}
+  const style=document.createElement('style');style.id='bcs-style';style.textContent=`
+#bcs-ui-root,#bcs-ui-root *{box-sizing:border-box}
+#bcs-open,#bcs-panel{position:fixed;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f7f7f8}
+#bcs-open{right:12px;bottom:18px;width:52px;height:52px;border:1px solid rgba(255,255,255,.16);border-radius:16px;background:rgba(14,14,18,.84);color:#fff;font-size:12px;font-weight:900;opacity:.22;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 6px 24px rgba(0,0,0,.36);touch-action:none;user-select:none;transition:opacity .16s ease,transform .16s ease}
+#bcs-open:hover,#bcs-open:focus,#bcs-open.bcs-open-active{opacity:.96;transform:scale(1.02)}
+#bcs-panel{right:10px;top:max(68px,env(safe-area-inset-top));width:min(365px,calc(100vw - 18px));max-height:min(82dvh,720px);display:none;flex-direction:column;overflow:hidden;background:linear-gradient(180deg,rgba(23,23,28,.97),rgba(12,12,15,.97));border:1px solid rgba(255,255,255,.08);border-radius:18px;box-shadow:0 14px 48px rgba(0,0,0,.44);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);font-size:11px;line-height:1.35}
+.bcs-head{padding:12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,.08);cursor:move;touch-action:none}.bcs-head-main{min-width:0;flex:1}.bcs-title{font-size:15px;font-weight:900}.bcs-sub{font-size:10px;opacity:.55;margin-top:2px}.bcs-chip{display:inline-flex;align-items:center;padding:4px 7px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(255,255,255,.08);font-size:10px;font-weight:800}.bcs-x{width:30px;height:30px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(255,255,255,.08);color:#fff;font-size:16px;font-weight:800}.bcs-body{padding:12px;overflow:auto}.bcs-section{margin:2px 0 8px}.bcs-section-title{font-size:13px;font-weight:900}.bcs-section-sub{font-size:10px;opacity:.54;margin-top:2px}.bcs-card{padding:10px;margin-bottom:10px;border:1px solid rgba(255,255,255,.07);border-radius:16px;background:rgba(255,255,255,.04)}.bcs-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.bcs-card-main{min-width:0;flex:1}.bcs-label{font-size:13px;font-weight:900}.bcs-desc{font-size:10px;line-height:1.35;opacity:.58;margin-top:3px}.bcs-badge{display:inline-flex;align-items:center;padding:3px 7px;border-radius:999px;font-size:9px;font-weight:850;white-space:nowrap}.bcs-live{color:#c4f2cf;background:rgba(86,194,120,.14);border:1px solid rgba(86,194,120,.40)}.bcs-session{color:#c9ddff;background:rgba(92,160,255,.14);border:1px solid rgba(92,160,255,.40)}.bcs-switch{position:relative;width:46px;min-width:46px;height:28px;padding:0;border:1px solid rgba(255,255,255,.10);border-radius:999px;background:rgba(255,255,255,.16)}.bcs-switch span{position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.25);transition:transform .16s ease}.bcs-switch.on{background:rgba(42,181,83,.88)}.bcs-switch.on span{transform:translateX(18px)}.bcs-switch:disabled{opacity:.38}.bcs-control{margin-top:8px}.bcs-select,.bcs-input,.bcs-btn{width:100%;border:1px solid rgba(255,255,255,.12);border-radius:11px;background:rgba(18,18,22,.96);color:#fff;padding:10px 11px;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.bcs-btn{background:rgba(255,255,255,.08);font-weight:800}.bcs-btn:disabled{opacity:.38}.bcs-custom{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;margin-top:8px}.bcs-bitrate-slider{display:grid;grid-template-columns:1fr 72px;gap:10px;align-items:center;margin-top:9px}.bcs-bitrate-slider input{width:100%}.bcs-bitrate-slider b{text-align:right}.bcs-safe-message{padding:10px;margin-bottom:10px;border:1px solid rgba(255,255,255,.07);border-radius:16px;background:rgba(255,255,255,.04)}.bcs-readout{display:grid;grid-template-columns:1fr 1fr;gap:8px}.bcs-readout-item{padding:9px;border:1px solid rgba(255,255,255,.07);border-radius:12px;background:rgba(255,255,255,.035)}.bcs-readout-k{font-size:9px;opacity:.52}.bcs-readout-v{font-size:12px;font-weight:850;margin-top:3px}.bcs-footer{padding:9px 12px 11px;border-top:1px solid rgba(255,255,255,.08);font-size:9px;opacity:.52}
 html.bcs-immersive-active,html.bcs-immersive-active body{overflow:hidden!important}html.bcs-immersive-active #bcs-open,html.bcs-immersive-active #bcs-panel{display:none!important}
 #bcs-immersive-overlay{position:fixed;z-index:2147483647;right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));display:flex;gap:6px;align-items:center;padding:5px 6px;border-radius:9px;background:rgba(8,8,10,.44);border:1px solid rgba(255,255,255,.16);font:9px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff;opacity:.38}#bcs-immersive-overlay button{border:1px solid rgba(255,255,255,.22);border-radius:7px;background:rgba(28,28,32,.82);color:#fff;padding:5px 7px;font:800 9px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}`;
   (document.head||document.documentElement).appendChild(style);
-  const open=document.createElement('button'); open.id='bcs-open'; open.textContent='BCS'; open.addEventListener('click',()=>setPanel(true));
-  const panel=document.createElement('div'); panel.id='bcs-panel'; panel.innerHTML=`
-<div class="bcs-head"><div><div class="bcs-title">BOOSTEROID CONTROL v${VERSION}</div><div class="bcs-muted">${IS_STREAM_DOCUMENT?'JOGAR • controlar • monitorar':'CONFIGURE UMA VEZ E JOGUE'}</div></div><button id="bcs-close" class="bcs-x">×</button></div>
+
+  const root=document.createElement('div');root.id='bcs-ui-root';
+  const open=document.createElement('button');open.id='bcs-open';open.type='button';open.textContent='BCS';open.setAttribute('aria-label','Abrir BCS');
+  const panel=document.createElement('div');panel.id='bcs-panel';panel.innerHTML=`
+<div class="bcs-head" id="bcs-drag-head"><div class="bcs-head-main"><div class="bcs-title">BOOSTEROID CONTROL</div><div class="bcs-sub">v${VERSION} • configure uma vez e jogue</div></div><span id="bcs-profile-chip" class="bcs-chip">--</span><button id="bcs-close" class="bcs-x" type="button">×</button></div>
 <div class="bcs-body">
- <div class="bcs-card"><div class="bcs-st">CONTROLE</div>
-  <div class="bcs-row"><span>Resolução</span><select id="bcs-res-mode" class="bcs-select"><option value="native">NATIVO</option><option value="1920x1080">1920×1080</option><option value="2400x1080">2400×1080</option><option value="2532x1170">2532×1170</option><option value="2560x1080">2560×1080</option><option value="custom">CUSTOM</option></select></div>
-  <div class="bcs-row" id="bcs-custom-row"><span>Custom</span><span><input id="bcs-res-w" class="bcs-select" style="width:70px" inputmode="numeric"> × <input id="bcs-res-h" class="bcs-select" style="width:70px" inputmode="numeric"></span></div>
-  <div class="bcs-row"><span>FPS</span><select id="bcs-fps-mode" class="bcs-select"><option value="60">60</option><option value="120">120</option></select></div>
-  <div class="bcs-row"><span>Bitrate</span><select id="bcs-bitrate-mode" class="bcs-select"><option value="auto">AUTO</option><option value="manual">MANUAL</option></select></div>
-  <div class="bcs-row" id="bcs-bitrate-row"><span>Limite</span><span><input id="bcs-bitrate-range" type="range" min="5" max="80" step="1" style="width:115px"> <b id="bcs-bitrate-value">--</b></span></div>
-  <div class="bcs-row"><span>Perfil</span><b id="bcs-auto-state">SAFE</b></div>
-  <div class="bcs-grid"><button id="bcs-apply-monitor" class="bcs-btn bcs-primary">${IS_STREAM_DOCUMENT?'APLICAR':'SALVAR'}</button><button id="bcs-start-session" class="bcs-btn bcs-primary">ATIVAR AUTO</button></div>
- </div>
- <div class="bcs-card" id="bcs-status-card"><div class="bcs-st">SESSÃO</div>
-  <div class="bcs-row"><span>Resolução real</span><b id="bcs-res-real" class="bcs-big">--</b></div><div class="bcs-row"><span>FPS real</span><b id="bcs-fps-real">--</b></div><div class="bcs-row"><span>Bitrate</span><b id="bcs-br-real">--</b></div><div class="bcs-row"><span>Codec</span><b id="bcs-codec">--</b></div><div class="bcs-row"><span>RTT</span><b id="bcs-rtt">--</b></div>
- </div>
- <div class="bcs-card" id="bcs-game-card"><div class="bcs-st">GAME MODE</div><div class="bcs-row"><span>Immersive</span><b id="bcs-immersive-state">OFF</b></div><div class="bcs-grid"><button id="bcs-immersive-toggle" class="bcs-btn bcs-primary">ENTRAR IMERSIVO</button><button id="bcs-immersive-retry" class="bcs-btn">RECAPTURAR</button></div></div>
- <details class="bcs-advanced"><summary>Advanced / Suporte</summary><div class="bcs-row"><span>Fix LMB+RMB</span><b id="bcs-fix-state">--</b></div><div class="bcs-row"><span>Erro</span><b id="bcs-error">--</b></div><div class="bcs-grid"><button id="bcs-download" class="bcs-btn">BAIXAR LOG</button><button id="bcs-fix-toggle" class="bcs-btn">KILL-SWITCH MOUSE</button></div><div class="bcs-note">Ferramentas de investigação não rodam permanentemente. O log preserva apenas suporte recente.</div></details>
- <button id="bcs-safe" class="bcs-btn bcs-danger">VOLTAR PARA SAFE</button>
-</div>`;
-  document.body.append(open,panel);
-  $('bcs-close').addEventListener('click',()=>setPanel(false));
-  if(!IS_STREAM_DOCUMENT){$('bcs-status-card').style.display='none';$('bcs-game-card').style.display='none';$('bcs-safe').style.display='none';}
-  $('bcs-res-mode').value=lsGet(K.resolutionMode,'native'); $('bcs-res-w').value=lsGet(K.resolutionW,'1920'); $('bcs-res-h').value=lsGet(K.resolutionH,'1080'); $('bcs-fps-mode').value=Number(lsGet(K.fps,'120'))===60?'60':'120'; $('bcs-bitrate-mode').value=lsGet(K.bitrateAuto,'true')!=='false'?'auto':'manual'; $('bcs-bitrate-range').value=String(clamp(Number(lsGet(K.bitrateManual,'40'))||40,5,80));
-  const saveCustom=()=>{lsSet(K.resolutionW,$('bcs-res-w').value);lsSet(K.resolutionH,$('bcs-res-h').value);saveProfilePreferences();updateUI();};
-  $('bcs-res-w').addEventListener('change',saveCustom); $('bcs-res-h').addEventListener('change',saveCustom);
-  $('bcs-res-mode').addEventListener('change',e=>{lsSet(K.resolutionMode,e.target.value);S.control.preferenceMode=e.target.value;saveProfilePreferences();updateUI();});
-  $('bcs-fps-mode').addEventListener('change',e=>{lsSet(K.fps,Number(e.target.value)===60?60:120);saveProfilePreferences();updateUI();});
-  $('bcs-bitrate-mode').addEventListener('change',e=>{lsSet(K.bitrateAuto,e.target.value==='auto'?'true':'false');saveProfilePreferences();updateUI();});
+  <div class="bcs-card"><div class="bcs-card-top"><div class="bcs-card-main"><div class="bcs-label">Controle de Stream</div><div class="bcs-desc">Liga o perfil de resolução, FPS e bitrate. Desligado = SAFE.</div></div><div><span class="bcs-badge bcs-session">PERFIL</span><div style="height:6px"></div><button id="bcs-profile-toggle" class="bcs-switch" type="button"><span></span></button></div></div></div>
+  <div id="bcs-safe-message" class="bcs-safe-message"><div class="bcs-label">SAFE</div><div class="bcs-desc">O perfil de stream está desligado. Suas escolhas continuam salvas.</div></div>
+  <div id="bcs-stream-settings">
+    <div class="bcs-section"><div class="bcs-section-title">Stream</div><div class="bcs-section-sub">Mude uma vez. O perfil fica salvo automaticamente.</div></div>
+    <div class="bcs-card"><div class="bcs-card-top"><div class="bcs-card-main"><div class="bcs-label">Resolução</div><div class="bcs-desc">Define a resolução usada pelo perfil salvo.</div></div><span class="bcs-badge bcs-session">SESSÃO</span></div><div class="bcs-control"><select id="bcs-res-mode" class="bcs-select"><option value="native">NATIVO</option><option value="1920x1080">1920×1080</option><option value="2400x1080">2400×1080</option><option value="2532x1170">2532×1170</option><option value="2560x1080">2560×1080</option><option value="custom">CUSTOM</option></select><div id="bcs-custom-row" class="bcs-custom"><input id="bcs-res-w" class="bcs-input" inputmode="numeric"><span>×</span><input id="bcs-res-h" class="bcs-input" inputmode="numeric"></div></div></div>
+    <div class="bcs-card"><div class="bcs-card-top"><div class="bcs-card-main"><div class="bcs-label">FPS</div><div class="bcs-desc">Define a taxa de quadros: 60 ou 120 FPS.</div></div><span class="bcs-badge bcs-live">AO VIVO</span></div><div class="bcs-control"><select id="bcs-fps-mode" class="bcs-select"><option value="60">60</option><option value="120">120</option></select></div></div>
+    <div class="bcs-card"><div class="bcs-card-top"><div class="bcs-card-main"><div class="bcs-label">Bitrate</div><div class="bcs-desc">Use AUTO ou ajuste manualmente entre 5 e 80 Mbps.</div></div><span class="bcs-badge bcs-live">AO VIVO</span></div><div class="bcs-control"><select id="bcs-bitrate-mode" class="bcs-select"><option value="auto">AUTO</option><option value="manual">MANUAL</option></select><div id="bcs-bitrate-row" class="bcs-bitrate-slider"><input id="bcs-bitrate-range" type="range" min="5" max="80" step="1"><b id="bcs-bitrate-value">--</b></div></div></div>
+  </div>
+  <div class="bcs-section"><div class="bcs-section-title">Jogo</div><div class="bcs-section-sub">Controles usados durante a jogatina.</div></div>
+  <div class="bcs-card"><div class="bcs-card-top"><div class="bcs-card-main"><div class="bcs-label">Mouse Smoothness</div><div id="bcs-smooth-desc" class="bcs-desc">Melhora a fluidez do movimento do mouse.</div></div><div><span class="bcs-badge bcs-live">AO VIVO</span><div style="height:6px"></div><button id="bcs-smooth-toggle" class="bcs-switch" type="button"><span></span></button></div></div></div>
+  <div class="bcs-card"><div class="bcs-card-top"><div class="bcs-card-main"><div class="bcs-label">Immersive</div><div class="bcs-desc">Abre o jogo em tela cheia.</div></div><span class="bcs-badge bcs-live">AO VIVO</span></div><div class="bcs-control"><button id="bcs-immersive-toggle" class="bcs-btn" type="button">ATIVAR IMERSIVO</button><button id="bcs-immersive-retry" class="bcs-btn" type="button" style="display:none;margin-top:7px">RECAPTURAR</button></div></div>
+  <div class="bcs-card" id="bcs-session-card"><div class="bcs-card-top"><div class="bcs-card-main"><div class="bcs-label">Sessão</div><div class="bcs-desc">Leitura rápida do stream atual.</div></div></div><div class="bcs-control bcs-readout"><div class="bcs-readout-item"><div class="bcs-readout-k">Resolução real</div><div id="bcs-res-real" class="bcs-readout-v">--</div></div><div class="bcs-readout-item"><div class="bcs-readout-k">FPS real</div><div id="bcs-fps-real" class="bcs-readout-v">--</div></div><div class="bcs-readout-item"><div class="bcs-readout-k">Bitrate</div><div id="bcs-br-real" class="bcs-readout-v">--</div></div><div class="bcs-readout-item"><div class="bcs-readout-k">Codec</div><div id="bcs-codec" class="bcs-readout-v">--</div></div><div class="bcs-readout-item"><div class="bcs-readout-k">RTT</div><div id="bcs-rtt" class="bcs-readout-v">--</div></div></div></div>
+  <div class="bcs-section"><div class="bcs-section-title">Suporte</div></div>
+  <div class="bcs-card"><div class="bcs-card-top"><div class="bcs-card-main"><div class="bcs-label">Log</div><div class="bcs-desc">Baixa o relatório JSON da sessão.</div></div></div><div class="bcs-control"><button id="bcs-download" class="bcs-btn" type="button">BAIXAR LOG</button></div></div>
+</div><div class="bcs-footer">As alterações do perfil são salvas automaticamente.</div>`;
+
+  root.append(open,panel);(document.documentElement||document.body).appendChild(root);
+  setProductUiPositions();
+  bindMovableElement($('bcs-drag-head'),panel,K.uiPanelX,K.uiPanelY);
+  bindMovableElement(open,open,K.uiFabX,K.uiFabY,{allowButtonHandle:true,suppressClickTarget:open});
+  window.addEventListener('resize',keepProductUiOnScreen,{passive:true});
+
+  open.addEventListener('pointerdown',()=>open.classList.add('bcs-open-active'));
+  open.addEventListener('pointerup',()=>{if(!S.ui.open)setTimeout(()=>{if(!S.ui.open)open.classList.remove('bcs-open-active');},220);});
+  open.addEventListener('pointercancel',()=>{if(!S.ui.open)open.classList.remove('bcs-open-active');});
+  open.addEventListener('click',()=>{if(open.dataset.suppressClick==='1')return;setPanel(!S.ui.open);});
+  $('bcs-close').addEventListener('pointerdown',e=>e.stopPropagation());
+  $('bcs-close').addEventListener('click',e=>{e.stopPropagation();setPanel(false);});
+
+  $('bcs-profile-toggle').addEventListener('click',async()=>{if(isAutoEnabled())await disarmResolutionControl();else await enableStreamProfileFromUI();updateUI();});
+  $('bcs-res-mode').addEventListener('change',e=>{void saveResolutionPreferenceFromUI(e.target.value);});
+  const saveCustom=()=>{void saveCustomResolutionFromUI($('bcs-res-w').value,$('bcs-res-h').value);};
+  $('bcs-res-w').addEventListener('change',saveCustom);$('bcs-res-h').addEventListener('change',saveCustom);
+  $('bcs-fps-mode').addEventListener('change',e=>{void saveFpsPreferenceFromUI(e.target.value);});
+  $('bcs-bitrate-mode').addEventListener('change',e=>{void saveBitratePreferenceFromUI(e.target.value==='auto',$('bcs-bitrate-range').value);});
   $('bcs-bitrate-range').addEventListener('input',e=>{const mb=clamp(Math.round(Number(e.target.value)||40),5,80);lsSet(K.bitrateManual,mb);setText('bcs-bitrate-value',`${mb} Mbps`);});
-  $('bcs-bitrate-range').addEventListener('change',()=>{saveProfilePreferences();updateUI();});
-  $('bcs-apply-monitor').addEventListener('click',applyVirtualMonitorFromUI); $('bcs-start-session').addEventListener('click',prepareNextSessionFromUI); $('bcs-safe').addEventListener('click',disarmResolutionControl);
-  $('bcs-immersive-toggle')?.addEventListener('click',async()=>{if(S.immersive.active||S.immersive.entering)await exitImmersiveMode('USER_UI');else await enterImmersiveMode('USER_UI');});
-  $('bcs-immersive-retry')?.addEventListener('click',()=>reacquireImmersiveLocks('PANEL_USER_GESTURE'));
-  $('bcs-download')?.addEventListener('click',downloadJSON);
-  $('bcs-fix-toggle')?.addEventListener('click',()=>setMouseChordFixEnabled(!S.mouseChordFix.enabled,'ADVANCED_KILL_SWITCH'));
-  S.ui.built=true; setPanel(lsGet(K.panelOpen,'false')==='true'); updateUI();
+  $('bcs-bitrate-range').addEventListener('change',e=>{void saveBitratePreferenceFromUI(false,e.target.value);});
+  $('bcs-smooth-toggle').addEventListener('click',()=>{if(!shouldAutoEnableMouseMotionSchedulingFix())return;setMouseSmoothnessPreferenceFromUI(!mouseSmoothnessPreference());});
+  $('bcs-immersive-toggle').addEventListener('click',async()=>{if(S.immersive.active||S.immersive.entering)await exitImmersiveMode('USER_UI');else await enterImmersiveMode('USER_UI');updateUI();});
+  $('bcs-immersive-retry').addEventListener('click',()=>reacquireImmersiveLocks('PANEL_USER_GESTURE'));
+  $('bcs-download').addEventListener('click',downloadJSON);
+
+  S.ui.built=true;setPanel(lsGet(K.panelOpen,'false')==='true');updateUI();keepProductUiOnScreen();
 }
 
 function waitForBody() {
@@ -2276,18 +2465,18 @@ function waitForBody() {
 
 function boot() {
   installMouseMotionSchedulingFixPage();
-  if (shouldAutoEnableMouseMotionSchedulingFix()) setMouseMotionSchedulingFixEnabled(true,'AUTO_INTEGRATED_LAB_B');
+  if (shouldAutoEnableMouseMotionSchedulingFix() && mouseSmoothnessPreference()) setMouseMotionSchedulingFixEnabled(true,'AUTO_INTEGRATED_LAB_B');
   installMouseChordFixPage();
   if (shouldAutoEnableMouseChordFix()) setMouseChordFixEnabled(true,'AUTO_INTEGRATED_LAB_B');
   installPageBridge();
   addEvent('SUITE_BOOT',{
     version:VERSION,build:BUILD,
-    architecture:'PLAY_FIRST__FROZEN_STREAM_CONTROL__LEAN_CORE_1HZ__IMMERSIVE_V2__H014C_MINIMAL_GUARD__H014D_RAF_SCHEDULING__COMPACT_SUPPORT_EXPORT',
+    architecture:'PLAY_FIRST__RC19_GAMEPLAY_FOUNDATION__PRODUCT_UI_NATIVE_STYLE__AUTO_PERSIST_PROFILE__LEAN_CORE_1HZ__IMMERSIVE_V2__H014C__H014D',
     controlModel:'PERSISTENT_AUTO_APPLY',profileEnabled:isAutoEnabled(),bootBehavior:isAutoEnabled()?'AUTO_APPLY_ENABLED':'SAFE',
     environment:{browser:ENV.browser,likelyPlatform:ENV.likelyPlatform},
     runtimePruning:{inputLab:false,mouseTransportProof:false,longSessionMonitor:false,imageLab:false,surfaceImageLab:false,inputShadowGuardian:false},
     mouseChordCompatibilityFix:{autoIntegrated:shouldAutoEnableMouseChordFix(),mode:'H014C_MINIMAL_GUARD_FIX',transportObservation:false},
-    mouseMotionSchedulingFix:{autoIntegrated:shouldAutoEnableMouseMotionSchedulingFix(),mode:'H014D_NATIVE_RAF_SCHEDULING_FIX',nativeSenderPreserved:true},
+    mouseMotionSchedulingFix:{autoIntegrated:shouldAutoEnableMouseMotionSchedulingFix(),preferenceEnabled:mouseSmoothnessPreference(),mode:'H014D_NATIVE_RAF_SCHEDULING_FIX',nativeSenderPreserved:true},
     immersiveGameMode:{nativeFirst:true,fullscreen:CAP.display.fullscreen,keyboardLock:CAP.input.keyboardLock,pointerLock:CAP.input.pointerLock,pointerLockStrategy:'BOOSTEROID_CURSOR_MODE_MANAGER',exitChord:IMMERSIVE_EXIT_CHORD_LABEL}
   });
   if (isAutoEnabled()) addEvent('AUTO_PROFILE_BOOT',{resolutionMode:lsGet(K.resolutionMode,'native'),resolutionTarget:resolutionTarget(),fps:Number(lsGet(K.fps,'120'))===60?60:120,bitrateAuto:lsGet(K.bitrateAuto,'true')!=='false',bitrateMbps:lsGet(K.bitrateAuto,'true')!=='false'?null:(Number(lsGet(K.bitrateManual,'0'))||null),streamDocument:IS_STREAM_DOCUMENT});
