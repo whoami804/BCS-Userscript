@@ -1,10 +1,13 @@
 // ==UserScript==
 // @name         BCS Pointer Coordinate Probe
 // @namespace    whoami.boosteroid.control-suite.probe
-// @version      0.1.0
-// @description  P0 diagnostic probe for Edge/Android pointer lock, relative deltas, absolute coordinates and gesture-resume resets. No gameplay input injection.
+// @version      0.1.1
+// @description  P0 Edge/Android pointer probe: pure local Pointer Lock or passive Boosteroid observation. No gameplay input injection.
 // @author       Whoami
 // @match        https://example.com/*
+// @match        https://boosteroid.com/*
+// @match        https://cloud.boosteroid.com/*
+// @match        https://*.boosteroid.com/*
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
@@ -12,12 +15,13 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.1.1';
   const TEST_MS = 12000;
   const LOCK_TIMEOUT_MS = 2500;
-  const MAX_EVENTS = 5000;
+  const MAX_EVENTS = 6000;
   const RESUME_GAP_MS = 250;
   const EDGE_PX = 20;
+  const IS_BOOSTEROID = /(^|\.)boosteroid\.com$/i.test(location.hostname);
 
   const now = () => performance.now();
   const round = (v, n = 3) => Number.isFinite(v) ? +v.toFixed(n) : null;
@@ -55,29 +59,29 @@
     };
   }
 
-  const S = {
-    root: null,
-    panel: null,
-    header: null,
-    status: null,
-    runsBox: null,
-    exportBtn: null,
-    surface: null,
-    dot: null,
-    running: null,
-    runs: [],
-    drag: null,
-    position: {x: 12, y: 12},
-    lockTimer: null,
-    testTimer: null,
-    finalizeAfterUnlock: false,
-    repromoteTimer: null
-  };
+  function findStreamVideo() {
+    return document.querySelector('video#remotevideo')
+      || document.querySelector('video[id*="remote" i]')
+      || document.querySelector('video');
+  }
+
+  function rectSnapshot(el) {
+    if (!el?.getBoundingClientRect) return null;
+    const r = el.getBoundingClientRect();
+    return {
+      element: labelElement(el),
+      left: round(r.left), top: round(r.top), right: round(r.right), bottom: round(r.bottom),
+      width: round(r.width), height: round(r.height)
+    };
+  }
 
   function environmentSnapshot() {
     let coalesced = false;
     try { coalesced = typeof PointerEvent !== 'undefined' && typeof PointerEvent.prototype?.getCoalescedEvents === 'function'; } catch {}
+    const video = findStreamVideo();
     return {
+      hostMode: IS_BOOSTEROID ? 'BOOSTEROID_PASSIVE_CAPABLE' : 'PURE_EDGE_LOCAL_LOCK',
+      href: location.href,
       userAgent: navigator.userAgent || '',
       platform: navigator.platform || '',
       maxTouchPoints: navigator.maxTouchPoints || 0,
@@ -101,21 +105,37 @@
       fullscreen: 'fullscreenElement' in document,
       edgeDetected: /Edg\//i.test(navigator.userAgent || ''),
       chromiumDetected: /Chrome|Chromium|Edg\//i.test(navigator.userAgent || ''),
-      androidDetected: /Android/i.test(navigator.userAgent || '')
+      androidDetected: /Android/i.test(navigator.userAgent || ''),
+      streamVideo: video ? {
+        rect: rectSnapshot(video),
+        videoWidth: num(video.videoWidth),
+        videoHeight: num(video.videoHeight),
+        paused: !!video.paused
+      } : null
     };
   }
 
-  function createRun(deviceLabel, lockMode) {
+  const S = {
+    panel: null, header: null, status: null, runsBox: null, exportBtn: null,
+    surface: null, dot: null, running: null, runs: [], drag: null,
+    position: {x: 12, y: 12}, lockTimer: null, testTimer: null,
+    finalizeAfterUnlock: false, repromoteTimer: null
+  };
+
+  function createRun(deviceLabel, mode) {
     return {
-      id: `${deviceLabel}-${lockMode}-${Date.now()}`,
+      id: `${deviceLabel}-${mode}-${Date.now()}`,
       deviceLabel,
-      lockMode,
+      mode,
       startedAtEpoch: Date.now(),
       startedAtPerf: null,
       endedAtPerf: null,
       stopReason: null,
+      passive: mode.startsWith('BOOSTEROID_PASSIVE'),
       lockRequest: {attempted: false, returnedPromise: null, resolved: null, errorName: null, errorMessage: null},
       acquired: false,
+      everPointerLocked: !!document.pointerLockElement,
+      pointerLockElementsSeen: document.pointerLockElement ? [labelElement(document.pointerLockElement)] : [],
       events: [],
       droppedEvents: 0,
       transitions: [],
@@ -124,58 +144,73 @@
       virtual: {x: innerWidth / 2, y: innerHeight / 2},
       lastMotionPerf: null,
       lastMotion: null,
-      environment: environmentSnapshot(),
+      environmentStart: environmentSnapshot(),
+      environmentEnd: null,
       summary: null,
       classification: []
     };
+  }
+
+  function edgeDistanceToRect(x, y, rect) {
+    if (!rect || x == null || y == null) return null;
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return null;
+    return Math.min(x - rect.left, y - rect.top, rect.right - x, rect.bottom - y);
   }
 
   function eventSample(type, e, t) {
     const cx = num(e.clientX), cy = num(e.clientY);
     const sx = num(e.screenX), sy = num(e.screenY);
     const dx = num(e.movementX), dy = num(e.movementY);
-    const edgeDistance = (cx != null && cy != null)
+    const viewportEdgeDistance = (cx != null && cy != null)
       ? Math.min(cx, cy, Math.max(0, innerWidth - cx), Math.max(0, innerHeight - cy))
       : null;
+    const videoRect = rectSnapshot(findStreamVideo());
+    const videoEdgeDistance = edgeDistanceToRect(cx, cy, videoRect);
     return {
       tMs: round(t - S.running.startedAtPerf),
       type,
       timeStamp: round(num(e.timeStamp)),
-      movementX: dx,
-      movementY: dy,
-      clientX: cx,
-      clientY: cy,
-      screenX: sx,
-      screenY: sy,
-      pageX: num(e.pageX),
-      pageY: num(e.pageY),
-      button: num(e.button),
-      buttons: num(e.buttons),
+      movementX: dx, movementY: dy,
+      clientX: cx, clientY: cy,
+      screenX: sx, screenY: sy,
+      pageX: num(e.pageX), pageY: num(e.pageY),
+      button: num(e.button), buttons: num(e.buttons),
       pointerType: e.pointerType || null,
-      pointerId: num(e.pointerId),
-      pressure: num(e.pressure),
+      pointerId: num(e.pointerId), pressure: num(e.pressure),
       isPrimary: typeof e.isPrimary === 'boolean' ? e.isPrimary : null,
       isTrusted: typeof e.isTrusted === 'boolean' ? e.isTrusted : null,
       firesTouchEvents: e.sourceCapabilities ? !!e.sourceCapabilities.firesTouchEvents : null,
       target: labelElement(e.target),
       pointerLocked: !!document.pointerLockElement,
       pointerLockElement: labelElement(document.pointerLockElement),
-      nearViewportEdge: edgeDistance != null ? edgeDistance <= EDGE_PX : null,
-      edgeDistancePx: round(edgeDistance)
+      fullscreen: !!document.fullscreenElement,
+      viewportEdgeDistancePx: round(viewportEdgeDistance),
+      nearViewportEdge: viewportEdgeDistance != null ? viewportEdgeDistance <= EDGE_PX : null,
+      videoRect,
+      videoEdgeDistancePx: round(videoEdgeDistance),
+      nearVideoEdge: videoEdgeDistance != null ? videoEdgeDistance <= EDGE_PX : null
     };
   }
 
   function recordTransition(kind, extra = {}) {
     const r = S.running;
     if (!r) return;
+    const ple = labelElement(document.pointerLockElement);
+    if (document.pointerLockElement) {
+      r.everPointerLocked = true;
+      r.acquired = true;
+      if (ple && !r.pointerLockElementsSeen.includes(ple)) r.pointerLockElementsSeen.push(ple);
+    }
     r.transitions.push({
       tMs: r.startedAtPerf == null ? null : round(now() - r.startedAtPerf),
       kind,
       pointerLocked: !!document.pointerLockElement,
-      pointerLockElement: labelElement(document.pointerLockElement),
+      pointerLockElement: ple,
       fullscreen: !!document.fullscreenElement,
+      fullscreenElement: labelElement(document.fullscreenElement),
       visibilityState: document.visibilityState,
       hasFocus: document.hasFocus(),
+      streamVideoRect: rectSnapshot(findStreamVideo()),
       ...extra
     });
   }
@@ -185,6 +220,13 @@
     if (!r || r.startedAtPerf == null) return;
     const t = now();
     const motionType = type === 'mousemove' || type === 'pointermove' || type === 'pointerrawupdate';
+
+    if (document.pointerLockElement) {
+      r.everPointerLocked = true;
+      r.acquired = true;
+      const ple = labelElement(document.pointerLockElement);
+      if (ple && !r.pointerLockElementsSeen.includes(ple)) r.pointerLockElementsSeen.push(ple);
+    }
 
     if (motionType && r.lastMotionPerf != null && t - r.lastMotionPerf >= RESUME_GAP_MS) {
       const current = eventSample(type, e, t);
@@ -199,7 +241,8 @@
         current: {
           clientX: current.clientX, clientY: current.clientY,
           screenX: current.screenX, screenY: current.screenY,
-          movementX: current.movementX, movementY: current.movementY
+          movementX: current.movementX, movementY: current.movementY,
+          pointerLocked: current.pointerLocked
         },
         clientJumpPx: (prev?.clientX != null && current.clientX != null)
           ? round(Math.hypot(current.clientX - prev.clientX, current.clientY - prev.clientY)) : null,
@@ -208,12 +251,13 @@
       });
     }
 
-    if (r.events.length < MAX_EVENTS) r.events.push(eventSample(type, e, t));
+    const sample = eventSample(type, e, t);
+    if (r.events.length < MAX_EVENTS) r.events.push(sample);
     else r.droppedEvents++;
 
     if (motionType) {
       r.lastMotionPerf = t;
-      r.lastMotion = r.events[r.events.length - 1] || r.lastMotion;
+      r.lastMotion = sample;
     }
 
     if (type === 'pointermove' && typeof e.getCoalescedEvents === 'function') {
@@ -223,14 +267,14 @@
         r.coalesced.samples += c.length;
         r.coalesced.maxSamplesPerHost = Math.max(r.coalesced.maxSamplesPerHost, c.length);
         for (const s of c.slice(0, 64)) {
-          const dx = num(s.movementX), dy = num(s.movementY);
-          if (dx != null) r.coalesced.movementX += dx;
-          if (dy != null) r.coalesced.movementY += dy;
+          const ddx = num(s.movementX), ddy = num(s.movementY);
+          if (ddx != null) r.coalesced.movementX += ddx;
+          if (ddy != null) r.coalesced.movementY += ddy;
         }
       } catch {}
     }
 
-    if (type === 'mousemove') updateVirtualCursor(e);
+    if (type === 'mousemove' && !r.passive) updateVirtualCursor(e);
   }
 
   function updateVirtualCursor(e) {
@@ -252,7 +296,8 @@
     const cx = motion.map(e => e.clientX).filter(Number.isFinite);
     const cy = motion.map(e => e.clientY).filter(Number.isFinite);
     const nonZero = motion.filter(e => (e.movementX || 0) !== 0 || (e.movementY || 0) !== 0);
-    const nearEdge = motion.filter(e => e.nearViewportEdge === true);
+    const nearViewportEdge = motion.filter(e => e.nearViewportEdge === true);
+    const nearVideoEdge = motion.filter(e => e.nearVideoEdge === true);
 
     let maxClientJump = 0;
     let suspiciousJumpCount = 0;
@@ -264,22 +309,34 @@
       const rel = Math.hypot(b.movementX || 0, b.movementY || 0);
       maxClientJump = Math.max(maxClientJump, jump);
       if (jump >= 24 && rel <= Math.max(6, jump * .35)) suspiciousJumpCount++;
-      if (jump >= 12) topJumps.push({tMs: b.tMs, jumpPx: round(jump), relativePx: round(rel), from: [a.clientX, a.clientY], to: [b.clientX, b.clientY]});
+      if (jump >= 12) topJumps.push({
+        tMs: b.tMs, jumpPx: round(jump), relativePx: round(rel),
+        from: [a.clientX, a.clientY], to: [b.clientX, b.clientY],
+        pointerLocked: b.pointerLocked
+      });
     }
     topJumps.sort((a, b) => b.jumpPx - a.jumpPx);
 
     const resumeJumps = r.resumes.map(x => x.clientJumpPx).filter(Number.isFinite);
     const clientRangeX = cx.length ? Math.max(...cx) - Math.min(...cx) : null;
     const clientRangeY = cy.length ? Math.max(...cy) - Math.min(...cy) : null;
+    const lockedMotion = motion.filter(e => e.pointerLocked);
+    const lockedNonZero = lockedMotion.filter(e => (e.movementX || 0) !== 0 || (e.movementY || 0) !== 0);
 
-    const summary = {
+    r.summary = {
       durationMs: round((r.endedAtPerf ?? now()) - (r.startedAtPerf ?? now())),
+      pointerLock: {
+        everObserved: r.everPointerLocked,
+        elementsSeen: r.pointerLockElementsSeen
+      },
       eventCounts: {
         totalStored: r.events.length,
         dropped: r.droppedEvents,
         mousemove: motion.length,
         pointermove: pointer.length,
         pointerrawupdate: raw.length,
+        lockedMousemove: lockedMotion.length,
+        lockedNonZeroMousemove: lockedNonZero.length,
         pointerdown: r.events.filter(e => e.type === 'pointerdown').length,
         pointerup: r.events.filter(e => e.type === 'pointerup').length,
         mousedown: r.events.filter(e => e.type === 'mousedown').length,
@@ -297,7 +354,8 @@
         clientY: summarize(cy),
         clientRangeX: round(clientRangeX),
         clientRangeY: round(clientRangeY),
-        nearEdgeEvents: nearEdge.length,
+        nearViewportEdgeEvents: nearViewportEdge.length,
+        nearVideoEdgeEvents: nearVideoEdge.length,
         maxConsecutiveClientJumpPx: round(maxClientJump),
         suspiciousJumpCount,
         topClientJumps: topJumps.slice(0, 20)
@@ -312,16 +370,23 @@
     };
 
     const cls = [];
-    if (!r.acquired) cls.push('POINTER_LOCK_NOT_ACQUIRED');
-    if (r.acquired && nonZero.length === 0) cls.push('RELATIVE_DELTA_ZERO_OR_MISSING');
-    if (r.acquired && motion.length > 20 && ((clientRangeX || 0) > 4 || (clientRangeY || 0) > 4)) cls.push('LOCKED_ABSOLUTE_COORDINATES_NOT_STABLE');
-    if (nearEdge.length >= 5 && nonZero.length > 0) cls.push('ABSOLUTE_EDGE_ACTIVITY_DURING_RELATIVE_MOTION');
+    if (r.passive && !r.everPointerLocked) cls.push('PASSIVE_POINTER_LOCK_NOT_OBSERVED');
+    if (!r.passive && !r.acquired) cls.push('POINTER_LOCK_NOT_ACQUIRED');
+    if (r.everPointerLocked && lockedMotion.length > 0 && lockedNonZero.length === 0) cls.push('RELATIVE_DELTA_ZERO_OR_MISSING_WHILE_LOCKED');
+    if (r.everPointerLocked && lockedMotion.length > 20) {
+      const lockedCx = lockedMotion.map(e => e.clientX).filter(Number.isFinite);
+      const lockedCy = lockedMotion.map(e => e.clientY).filter(Number.isFinite);
+      const rx = lockedCx.length ? Math.max(...lockedCx) - Math.min(...lockedCx) : null;
+      const ry = lockedCy.length ? Math.max(...lockedCy) - Math.min(...lockedCy) : null;
+      if ((rx || 0) > 4 || (ry || 0) > 4) cls.push('LOCKED_ABSOLUTE_COORDINATES_NOT_STABLE');
+      if (lockedNonZero.length > 20 && (rx || 0) <= 4 && (ry || 0) <= 4) cls.push('RELATIVE_CHANNEL_HEALTHY_WHILE_LOCKED');
+    }
+    if (nearViewportEdge.length >= 5 && nonZero.length > 0) cls.push('ABSOLUTE_VIEWPORT_EDGE_ACTIVITY_DURING_RELATIVE_MOTION');
+    if (nearVideoEdge.length >= 5 && nonZero.length > 0) cls.push('ABSOLUTE_VIDEO_EDGE_ACTIVITY_DURING_RELATIVE_MOTION');
     if (resumeJumps.some(v => v >= 24)) cls.push('ABSOLUTE_RESUME_JUMP_CANDIDATE');
     if (suspiciousJumpCount > 0) cls.push('ABSOLUTE_RELATIVE_MISMATCH_CANDIDATE');
-    if (r.acquired && nonZero.length > 20 && (clientRangeX || 0) <= 4 && (clientRangeY || 0) <= 4) cls.push('RELATIVE_CHANNEL_HEALTHY_IN_PROBE');
     if (!cls.length) cls.push('INCONCLUSIVE');
 
-    r.summary = summary;
     r.classification = cls;
   }
 
@@ -331,14 +396,11 @@
         name: 'BCS Pointer Coordinate Probe',
         version: VERSION,
         purpose: 'P0 Edge Android relative-pointer / absolute-coordinate mismatch diagnosis',
-        policy: 'TEMPORARY_PRE_PLAY_DIAGNOSTIC'
+        policy: 'TEMPORARY_PRE_PLAY_OR_PASSIVE_LIVE_DIAGNOSTIC'
       },
       exportedAt: new Date().toISOString(),
       testHost: location.href,
-      instructions: {
-        mouse: 'Move center -> horizontal edges -> vertical edges during lock.',
-        dualSense: 'Drag touchpad, lift finger, touch again and drag repeatedly during lock.'
-      },
+      hostMode: IS_BOOSTEROID ? 'BOOSTEROID_PASSIVE' : 'PURE_EDGE_LOCAL_LOCK',
       runs: S.runs,
       safety: {
         transportHooks: false,
@@ -348,14 +410,15 @@
         syntheticGameplayEvents: false,
         dispatchEventCalls: 0,
         storageMutation: false,
-        boosteroidRuntimeTouched: false,
-        pointerLockRequestedOnlyOnLocalProbeSurface: true
+        boosteroidRuntimeMutation: false,
+        boosteroidPointerLockRequests: 0,
+        localProbePointerLockRequestsOnlyOnExampleCom: true
       },
       interpretation: {
-        relativeBrokenInPureEdge: 'movementX/Y zero, malformed, huge spikes, or unstable alongside local virtual cursor failure',
+        chromiumRelativeBroken: 'locked movementX/Y are zero/malformed or show pathological spikes before any Boosteroid handling',
         absoluteRelativeMismatch: 'relative deltas remain plausible while client/screen coordinates jump, clamp or reset',
-        boosteroidNeededNext: 'pure Edge relative channel is healthy and stable; only then instrument Boosteroid passively',
-        note: 'Classifications are diagnostic signals, not an upstream browser root-cause proof by themselves.'
+        boosteroidSpecificCandidate: 'pure Edge is healthy but passive Boosteroid run becomes malformed or edge/reset classifications appear',
+        note: 'Diagnostic classifications are signals, not final upstream root-cause claims.'
       }
     };
   }
@@ -367,7 +430,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `bcs-pointer-coordinate-probe-v010-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    a.download = `bcs-pointer-coordinate-probe-v011-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
     a.style.display = 'none';
     document.documentElement.appendChild(a);
     a.click();
@@ -385,7 +448,7 @@
     S.runs.forEach((r, i) => {
       const row = document.createElement('div');
       row.className = 'bcs-ptr-run';
-      row.textContent = `${i + 1}. ${r.deviceLabel} / ${r.lockMode}: ${r.classification.join(' + ')}`;
+      row.textContent = `${i + 1}. ${r.deviceLabel} / ${r.mode}: ${r.classification.join(' + ')}`;
       S.runsBox.appendChild(row);
     });
     S.exportBtn.disabled = false;
@@ -411,6 +474,7 @@
     r.endedAtPerf = now();
     r.stopReason = reason;
     recordTransition('FINALIZE', {reason});
+    r.environmentEnd = environmentSnapshot();
     summarizeRun(r);
     S.runs.push(r);
     S.running = null;
@@ -425,9 +489,9 @@
     const r = S.running;
     if (!r) return;
     clearTimers();
-    if (document.pointerLockElement) {
+    if (!r.passive && document.pointerLockElement === S.surface) {
       S.finalizeAfterUnlock = true;
-      recordTransition('EXIT_POINTER_LOCK_REQUESTED', {reason});
+      recordTransition('EXIT_LOCAL_POINTER_LOCK_REQUESTED', {reason});
       try { document.exitPointerLock(); }
       catch { finalizeRun(`${reason}_exit_lock_error`); }
       setTimeout(() => {
@@ -458,14 +522,14 @@
     return surface;
   }
 
-  async function requestLock(surface, mode) {
+  async function requestLocalLock(surface, mode) {
     const r = S.running;
-    if (!r) return;
+    if (!r || IS_BOOSTEROID) return;
     r.lockRequest.attempted = true;
     recordTransition('POINTER_LOCK_REQUEST', {mode});
     try {
       let ret;
-      if (mode === 'UNADJUSTED') ret = surface.requestPointerLock({unadjustedMovement: true});
+      if (mode === 'LOCAL_UNADJUSTED') ret = surface.requestPointerLock({unadjustedMovement: true});
       else ret = surface.requestPointerLock();
       r.lockRequest.returnedPromise = !!ret && typeof ret.then === 'function';
       if (r.lockRequest.returnedPromise) {
@@ -481,26 +545,49 @@
     }
   }
 
-  function startRun(deviceLabel, lockMode = 'NORMAL') {
-    if (S.running) return;
-    const r = createRun(deviceLabel, lockMode);
+  function startLocalRun(deviceLabel, mode = 'LOCAL_NORMAL') {
+    if (S.running || IS_BOOSTEROID) return;
+    const r = createRun(deviceLabel, mode);
     S.running = r;
     setButtonsDisabled(true);
-    setStatus(`Preparando ${deviceLabel} / ${lockMode}…`);
+    setStatus(`Preparando ${deviceLabel} / ${mode}…`);
     const surface = buildSurface(deviceLabel);
     surface.focus({preventScroll: true});
     S.lockTimer = setTimeout(() => {
       if (S.running && !S.running.acquired) finalizeRun('lock_acquisition_timeout');
     }, LOCK_TIMEOUT_MS);
-    requestLock(surface, lockMode);
+    requestLocalLock(surface, mode);
+  }
+
+  function startPassiveRun(deviceLabel) {
+    if (S.running || !IS_BOOSTEROID) return;
+    const r = createRun(deviceLabel, `BOOSTEROID_PASSIVE_${deviceLabel}`);
+    S.running = r;
+    r.startedAtPerf = now();
+    r.lastMotionPerf = null;
+    r.lastMotion = null;
+    setButtonsDisabled(true);
+    recordTransition('PASSIVE_RUN_START');
+    setStatus(`${deviceLabel}: PASSIVO 12s — capture o jogo e provoque o bug.`);
+    S.testTimer = setTimeout(() => stopRun('timer_complete'), TEST_MS);
   }
 
   function onPointerLockChange() {
     const r = S.running;
-    if (!r) return;
+    if (!r) {
+      repromoteTopLayer();
+      return;
+    }
     recordTransition('pointerlockchange');
+    if (r.passive) {
+      repromoteTopLayer();
+      return;
+    }
     if (document.pointerLockElement === S.surface && !r.acquired) {
       r.acquired = true;
+      r.everPointerLocked = true;
+      const ple = labelElement(document.pointerLockElement);
+      if (ple && !r.pointerLockElementsSeen.includes(ple)) r.pointerLockElementsSeen.push(ple);
       r.startedAtPerf = now();
       r.lastMotionPerf = null;
       r.lastMotion = null;
@@ -522,7 +609,7 @@
   function onPointerLockError() {
     if (!S.running) return;
     recordTransition('pointerlockerror');
-    finalizeRun('pointerlockerror');
+    if (!S.running.passive) finalizeRun('pointerlockerror');
   }
 
   function setStatus(text) {
@@ -555,17 +642,14 @@
       if (e.button != null && e.button !== 0) return;
       if (e.target.closest('button')) return;
       const rect = S.panel.getBoundingClientRect();
-      S.drag = {id: e.pointerId, dx: e.clientX - rect.left, dy: e.clientY - rect.top, moved: false};
+      S.drag = {id: e.pointerId, dx: e.clientX - rect.left, dy: e.clientY - rect.top};
       try { h.setPointerCapture(e.pointerId); } catch {}
       e.preventDefault();
     });
     h.addEventListener('pointermove', e => {
       if (!S.drag || S.drag.id !== e.pointerId) return;
-      const nx = e.clientX - S.drag.dx;
-      const ny = e.clientY - S.drag.dy;
-      if (Math.abs(nx - S.position.x) + Math.abs(ny - S.position.y) > 4) S.drag.moved = true;
-      S.position.x = nx;
-      S.position.y = ny;
+      S.position.x = e.clientX - S.drag.dx;
+      S.position.y = e.clientY - S.drag.dy;
       clampPosition();
     });
     const end = e => {
@@ -594,7 +678,7 @@
     const style = document.createElement('style');
     style.textContent = `
       #bcs-pointer-probe-panel {
-        position: fixed; inset: auto; margin: 0; width: min(360px, calc(100vw - 12px));
+        position: fixed; inset: auto; margin: 0; width: min(380px, calc(100vw - 12px));
         max-height: calc(100dvh - 12px); overflow: auto; overscroll-behavior: contain;
         background: rgba(15,17,22,.97); color: #f5f7fb; border: 1px solid rgba(255,255,255,.14);
         border-radius: 12px; box-shadow: 0 12px 36px rgba(0,0,0,.45); padding: 0;
@@ -628,16 +712,28 @@
     const panel = document.createElement('div');
     panel.id = 'bcs-pointer-probe-panel';
     panel.setAttribute('popover', 'manual');
+
+    const controls = IS_BOOSTEROID ? `
+      <div class="bcs-ptr-status">BOOSTEROID PASSIVO. O probe não pede nem solta Pointer Lock.</div>
+      <div class="bcs-ptr-help">Pressione um teste, capture o mouse normalmente no jogo e provoque o bug nas bordas / entre gestos.</div>
+      <div class="bcs-ptr-grid">
+        <button data-run="boost-mouse">BOOSTEROID<br>MOUSE PASSIVO</button>
+        <button data-run="boost-dualsense">BOOSTEROID<br>DUALSENSE PASSIVO</button>
+      </div>
+    ` : `
+      <div class="bcs-ptr-status">EDGE PURO. Pointer Lock somente na superfície local do probe.</div>
+      <div class="bcs-ptr-help">Cada teste dura 12s. O ponto amarelo integra somente <code>movementX/Y</code>.</div>
+      <div class="bcs-ptr-grid">
+        <button data-run="mouse">MOUSE FÍSICO<br>LOCK NORMAL</button>
+        <button data-run="dualsense">DUALSENSE<br>LOCK NORMAL</button>
+      </div>
+      <button class="bcs-ptr-secondary" data-run="unadjusted">MOUSE · UNADJUSTED (opcional)</button>
+    `;
+
     panel.innerHTML = `
       <div class="bcs-ptr-header"><strong>PTR PROBE v${VERSION}</strong><span>arraste aqui</span></div>
       <div class="bcs-ptr-body">
-        <div class="bcs-ptr-status">Pronto. Rode primeiro fora do Boosteroid.</div>
-        <div class="bcs-ptr-help">Cada teste dura 12s. O ponto amarelo é um cursor virtual calculado somente com <code>movementX/Y</code>.</div>
-        <div class="bcs-ptr-grid">
-          <button data-run="mouse">MOUSE FÍSICO<br>LOCK NORMAL</button>
-          <button data-run="dualsense">DUALSENSE<br>LOCK NORMAL</button>
-        </div>
-        <button class="bcs-ptr-secondary" data-run="unadjusted">MOUSE · UNADJUSTED (opcional)</button>
+        ${controls}
         <button class="bcs-ptr-secondary" data-stop disabled>PARAR TESTE</button>
         <div class="bcs-ptr-runs">Nenhum teste concluído.</div>
         <button class="bcs-ptr-secondary" data-export disabled>BAIXAR PACOTE JSON</button>
@@ -650,9 +746,11 @@
     S.runsBox = panel.querySelector('.bcs-ptr-runs');
     S.exportBtn = panel.querySelector('[data-export]');
 
-    panel.querySelector('[data-run="mouse"]').addEventListener('click', () => startRun('MOUSE_FISICO', 'NORMAL'));
-    panel.querySelector('[data-run="dualsense"]').addEventListener('click', () => startRun('DUALSENSE', 'NORMAL'));
-    panel.querySelector('[data-run="unadjusted"]').addEventListener('click', () => startRun('MOUSE_FISICO', 'UNADJUSTED'));
+    panel.querySelector('[data-run="mouse"]')?.addEventListener('click', () => startLocalRun('MOUSE_FISICO', 'LOCAL_NORMAL'));
+    panel.querySelector('[data-run="dualsense"]')?.addEventListener('click', () => startLocalRun('DUALSENSE', 'LOCAL_NORMAL'));
+    panel.querySelector('[data-run="unadjusted"]')?.addEventListener('click', () => startLocalRun('MOUSE_FISICO', 'LOCAL_UNADJUSTED'));
+    panel.querySelector('[data-run="boost-mouse"]')?.addEventListener('click', () => startPassiveRun('MOUSE_FISICO'));
+    panel.querySelector('[data-run="boost-dualsense"]')?.addEventListener('click', () => startPassiveRun('DUALSENSE'));
     panel.querySelector('[data-stop]').addEventListener('click', () => stopRun('manual_stop'));
     S.exportBtn.addEventListener('click', downloadPackage);
 
@@ -670,11 +768,21 @@
   window.addEventListener('pointercancel', e => recordEvent('pointercancel', e), passiveCapture);
   window.addEventListener('mousedown', e => recordEvent('mousedown', e), passiveCapture);
   window.addEventListener('mouseup', e => recordEvent('mouseup', e), passiveCapture);
+
   document.addEventListener('pointerlockchange', onPointerLockChange, true);
   document.addEventListener('pointerlockerror', onPointerLockError, true);
   document.addEventListener('fullscreenchange', () => {
     if (S.running) recordTransition('fullscreenchange');
     repromoteTopLayer();
+  }, true);
+  document.addEventListener('visibilitychange', () => {
+    if (S.running) recordTransition('visibilitychange');
+  }, true);
+  window.addEventListener('focus', () => {
+    if (S.running) recordTransition('focus');
+  }, true);
+  window.addEventListener('blur', () => {
+    if (S.running) recordTransition('blur');
   }, true);
   window.addEventListener('resize', () => clampPosition(), {passive: true});
   window.visualViewport?.addEventListener('resize', () => clampPosition(), {passive: true});
