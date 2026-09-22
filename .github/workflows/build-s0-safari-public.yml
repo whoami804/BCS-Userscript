@@ -1,0 +1,39 @@
+name: Build public S0 Safari candidate
+
+on:
+  push:
+    branches:
+      - feat/s0-safari-runtime-isolation
+    paths:
+      - tools/build-s0-safari-public.mjs
+      - .github/workflows/build-s0-safari-public.yml
+      - control-suite-boosteroid-beta.user.js
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/s0-safari-runtime-isolation
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build and validate public S0 Safari candidate
+        run: node tools/build-s0-safari-public.mjs
+      - name: Commit generated public candidate
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add control-suite-boosteroid-s0-safari-rc1.user.js validations/control-suite-v0.9.0-s0-safari-rc1-public-static.json
+          if git diff --cached --quiet; then
+            echo "No generated changes"
+            exit 0
+          fi
+          git commit -m "s0 safari: generated public candidate and validation"
+          git push origin HEAD:feat/s0-safari-runtime-isolation
