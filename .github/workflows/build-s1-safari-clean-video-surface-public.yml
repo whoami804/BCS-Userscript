@@ -1,0 +1,39 @@
+name: Build public S1 Safari clean video surface
+
+on:
+  push:
+    branches:
+      - feat/s1-safari-clean-video-surface
+    paths:
+      - tools/build-s1-safari-clean-video-surface-public.mjs
+      - .github/workflows/build-s1-safari-clean-video-surface-public.yml
+      - control-suite-boosteroid-s0-safari-rc1.user.js
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/s1-safari-clean-video-surface
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build and validate public S1 Safari clean-surface candidate
+        run: node tools/build-s1-safari-clean-video-surface-public.mjs
+      - name: Commit generated public candidate
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add control-suite-boosteroid-s1-safari-clean-rc1.user.js validations/control-suite-v0.9.0-s1-safari-clean-surface-rc1-public-static.json
+          if git diff --cached --quiet; then
+            echo "No generated changes"
+            exit 0
+          fi
+          git commit -m "s1 safari: generated public clean-surface candidate and validation"
+          git push origin HEAD:feat/s1-safari-clean-video-surface
