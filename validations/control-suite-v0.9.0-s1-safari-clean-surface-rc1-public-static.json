@@ -1,0 +1,37 @@
+{
+  "artifact": "control-suite-boosteroid-s1-safari-clean-rc1.user.js",
+  "version": "0.9.0-s1-safari-clean-rc1",
+  "status": "STATIC_PASS_PUBLIC_LAB_A_CLEAN_SURFACE_LIVE_READY",
+  "base": {
+    "publicSha256": "c19d8aed47ab97f2093425238b493331e7dfd0670b6e3d791c512450348f11af",
+    "requiredPublicSha256": "c19d8aed47ab97f2093425238b493331e7dfd0670b6e3d791c512450348f11af",
+    "normalizedEngineeringSha256": "31cdd13ec46f62a122d023771444ed7686a48ed474eb633b0764ceb656c1fef1",
+    "requiredEngineeringSha256": "31cdd13ec46f62a122d023771444ed7686a48ed474eb633b0764ceb656c1fef1"
+  },
+  "candidate": {
+    "publicSha256": "28841e826307944ee77d36751eb8168b0cdb717658a584628935f27840767988",
+    "normalizedEngineeringSha256": "9eb68882d76eddb31ba55b0baa5e96fbdb11f28fb215719c75aee203e114b631",
+    "requiredEngineeringCandidateSha256": "9eb68882d76eddb31ba55b0baa5e96fbdb11f28fb215719c75aee203e114b631",
+    "bytes": 126961,
+    "lines": 2520,
+    "updateURL": "https://raw.githubusercontent.com/whoami804/BCS-Userscript/feat/s1-safari-clean-video-surface/control-suite-boosteroid-s1-safari-clean-rc1.user.js",
+    "downloadURL": "https://raw.githubusercontent.com/whoami804/BCS-Userscript/feat/s1-safari-clean-video-surface/control-suite-boosteroid-s1-safari-clean-rc1.user.js"
+  },
+  "nodeCheck": "PASS",
+  "exactChanges": [
+    "metadata-version",
+    "metadata-description",
+    "metadata-update-url",
+    "metadata-download-url",
+    "runtime-version",
+    "runtime-build",
+    "retain-clean-surface-event",
+    "lab-a-clean-video-surface"
+  ],
+  "experiment": {
+    "labAStreamUiCreation": false,
+    "visualSurfaceInLabAStream": "NONE_CREATED_BY_BCS",
+    "normalBoosteroidPageUiCreation": true
+  },
+  "distributionOnlyDifferenceFromEngineeringCandidate": true
+}
