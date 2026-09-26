@@ -6,6 +6,7 @@ on:
       - feat/s1-1-safari-deferred-evidence
     paths:
       - tools/build-s1-1-safari-deferred-evidence-public.mjs
+      - tools/run-build-s1-1-safari-deferred-evidence-public.mjs
       - .github/workflows/build-s1-1-safari-deferred-evidence-public.yml
       - control-suite-boosteroid-s1-safari-clean-rc1.user.js
 
@@ -24,7 +25,7 @@ jobs:
         with:
           node-version: '22'
       - name: Build and validate public S1.1 candidate
-        run: node tools/build-s1-1-safari-deferred-evidence-public.mjs
+        run: node tools/run-build-s1-1-safari-deferred-evidence-public.mjs
       - name: Commit generated public candidate
         run: |
           set -euo pipefail
