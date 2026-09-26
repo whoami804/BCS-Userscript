@@ -38,3 +38,5 @@ jobs:
           fi
           git commit -m "s1.1 safari: generated public deferred-evidence candidate and validation"
           git push origin HEAD:feat/s1-1-safari-deferred-evidence
+
+# Isolated candidate branch; does not replace main beta.
