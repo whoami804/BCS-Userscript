@@ -1,0 +1,49 @@
+{
+  "artifact": "control-suite-boosteroid-s1-1-safari-deferred-rc1.user.js",
+  "version": "0.9.0-s1-1-safari-deferred-rc1",
+  "status": "STATIC_PASS_PUBLIC_LAB_A_DEFERRED_EVIDENCE_LIVE_READY",
+  "base": {
+    "publicSha256": "28841e826307944ee77d36751eb8168b0cdb717658a584628935f27840767988",
+    "requiredPublicSha256": "28841e826307944ee77d36751eb8168b0cdb717658a584628935f27840767988",
+    "normalizedEngineeringSha256": "9eb68882d76eddb31ba55b0baa5e96fbdb11f28fb215719c75aee203e114b631",
+    "requiredEngineeringSha256": "9eb68882d76eddb31ba55b0baa5e96fbdb11f28fb215719c75aee203e114b631"
+  },
+  "candidate": {
+    "publicSha256": "1c8b85d5b764d57b7c0f2f8ea06201bd1e73928c2b01324cd4ee81a24467af73",
+    "normalizedEngineeringSha256": "77b76c84c35299553da2e028f2fab0fa9a68ee7d2bb44414099575bc3bb366e9",
+    "requiredEngineeringCandidateSha256": "77b76c84c35299553da2e028f2fab0fa9a68ee7d2bb44414099575bc3bb366e9",
+    "bytes": 131996,
+    "lines": 2591,
+    "updateURL": "https://raw.githubusercontent.com/whoami804/BCS-Userscript/feat/s1-1-safari-deferred-evidence/control-suite-boosteroid-s1-1-safari-deferred-rc1.user.js",
+    "downloadURL": "https://raw.githubusercontent.com/whoami804/BCS-Userscript/feat/s1-1-safari-deferred-evidence/control-suite-boosteroid-s1-1-safari-deferred-rc1.user.js",
+    "engineeringCandidateSha256": "609812d28c700af3ab2a5b81ca5d2b8ffebb0c0f11264bb969144b5fd8727232",
+    "normalizedPublicRuntimeSha256": "77b76c84c35299553da2e028f2fab0fa9a68ee7d2bb44414099575bc3bb366e9",
+    "byteIdenticalToEngineeringCandidate": false,
+    "identityNote": "Public S1.1 uses the same fail-closed approved change set but the newly inserted deferred-evidence block is source-formatted differently; frozen pre-existing runtime blocks remain untouched."
+  },
+  "nodeCheck": "PASS",
+  "exactChanges": [
+    "metadata-version",
+    "metadata-description",
+    "metadata-update-url",
+    "metadata-download-url",
+    "runtime-version",
+    "runtime-build",
+    "deferred-evidence-constants",
+    "deferred-evidence-functions",
+    "periodic-deferred-evidence",
+    "deferred-evidence-ui-state",
+    "deferred-evidence-support-card",
+    "deferred-evidence-download-handler",
+    "clean-surface-boot-evidence"
+  ],
+  "distributionOnlyDifferenceFromEngineeringCandidate": false,
+  "experiment": {
+    "cleanSurfacePreserved": true,
+    "streamUiCreation": false,
+    "deferredEvidenceTransport": "Domain=.boosteroid.com cookie",
+    "persistenceIntervalSec": 15,
+    "normalPageDownload": true
+  },
+  "publicRuntimeValidation": "INDEPENDENT_STATIC_PASS_REQUIRED"
+}
