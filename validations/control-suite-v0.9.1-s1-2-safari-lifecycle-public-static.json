@@ -1,0 +1,55 @@
+{
+  "artifact": "control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js",
+  "version": "0.9.1-s1-2-safari-lifecycle-rc1",
+  "status": "STATIC_AND_OFFLINE_HARNESS_PASS__PUBLIC_LIVE_READY",
+  "base": {
+    "artifact": "control-suite-boosteroid-s1-1-safari-deferred-rc1.user.js",
+    "sha256": "1c8b85d5b764d57b7c0f2f8ea06201bd1e73928c2b01324cd4ee81a24467af73",
+    "requiredSha256": "1c8b85d5b764d57b7c0f2f8ea06201bd1e73928c2b01324cd4ee81a24467af73"
+  },
+  "candidate": {
+    "sha256": "3e1b67c89d27fd1e266198dbceb10984d75074b77627b4ec9184a8f99c6ae8a0",
+    "bytes": 133121,
+    "lines": 2625
+  },
+  "nodeCheck": "PASS",
+  "exactChanges": [
+    "metadata-version",
+    "metadata-description",
+    "metadata-update-url",
+    "runtime-version",
+    "runtime-build",
+    "evidence-cookie",
+    "lifecycle-state-var",
+    "deferred-evidence-policy-and-storage",
+    "sample-lifecycle-and-evidence",
+    "ui-status-label",
+    "ui-last-session-label",
+    "dynamic-clean-surface-lifecycle"
+  ],
+  "frozenBlocks": {
+    "h014c": {
+      "status": "BYTE_IDENTICAL_TO_PUBLIC_S1_1",
+      "sha256": "02890dd4db14feebfc415ae9a05e5b88d2747cc89a178b43144ff81d98316224"
+    },
+    "h014d": {
+      "status": "BYTE_IDENTICAL_TO_PUBLIC_S1_1",
+      "sha256": "2abecb3e4eb083631199f3de749f299eb53afdc18a6426f48e7266fa1d5fe942"
+    },
+    "pageBridge": {
+      "status": "BYTE_IDENTICAL_TO_PUBLIC_S1_1",
+      "sha256": "d1b9b0b6b1cd95b526b64a8dcef3b58d243ef0f8d20f494eb3db5d7d36c2792e"
+    },
+    "getStatsCallCount": {
+      "base": 1,
+      "candidate": 1
+    },
+    "transportAndPayload": "NOT_EDITED"
+  },
+  "lifecycleHarness": {
+    "status": "OFFLINE_LIFECYCLE_HARNESS_PASS",
+    "sha256": "3e1b67c89d27fd1e266198dbceb10984d75074b77627b4ec9184a8f99c6ae8a0",
+    "checks": 22,
+    "artifactTested": "PUBLIC_INSTALLABLE"
+  }
+}

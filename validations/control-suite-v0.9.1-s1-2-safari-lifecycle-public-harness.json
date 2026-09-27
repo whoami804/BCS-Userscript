@@ -1,0 +1,99 @@
+{
+  "artifact": "control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js",
+  "sha256": "3e1b67c89d27fd1e266198dbceb10984d75074b77627b4ec9184a8f99c6ae8a0",
+  "status": "OFFLINE_LIFECYCLE_HARNESS_PASS",
+  "scenario": "PRE_STREAM -> ACTIVE -> ACTIVE_REFRESH -> EXIT/PRE_STREAM",
+  "checks": [
+    {
+      "name": "POLICY_MARKERS_PRESENT",
+      "status": "PASS"
+    },
+    {
+      "name": "PRE_STREAM_CLASSIFIES_INACTIVE",
+      "status": "PASS"
+    },
+    {
+      "name": "ACTIVE_CLASSIFIES_ACTIVE",
+      "status": "PASS"
+    },
+    {
+      "name": "EXIT_CLASSIFIES_INACTIVE",
+      "status": "PASS"
+    },
+    {
+      "name": "BOOT_EVIDENCE_WRITES",
+      "status": "PASS"
+    },
+    {
+      "name": "ACTIVE_EVIDENCE_REPLACES_BOOT",
+      "status": "PASS"
+    },
+    {
+      "name": "ACTIVE_EVIDENCE_CAN_REFRESH",
+      "status": "PASS"
+    },
+    {
+      "name": "PRE_STREAM_CANNOT_OVERWRITE_CONFIRMED",
+      "status": "PASS"
+    },
+    {
+      "name": "CONFIRMED_SNAPSHOT_PRESERVED_AFTER_EXIT",
+      "status": "PASS"
+    },
+    {
+      "name": "PRESERVED_RESOLUTION_2400X1080",
+      "status": "PASS"
+    },
+    {
+      "name": "PRESERVED_ACTIVE_METRICS",
+      "status": "PASS"
+    },
+    {
+      "name": "UI_PRESENT_DURING_PRE_STREAM",
+      "status": "PASS"
+    },
+    {
+      "name": "UI_HIDDEN_ON_CONFIRMED_ACTIVE",
+      "status": "PASS"
+    },
+    {
+      "name": "UI_STAYS_HIDDEN_DURING_ACTIVE_REFRESH",
+      "status": "PASS"
+    },
+    {
+      "name": "UI_RESTORED_AFTER_EXIT",
+      "status": "PASS"
+    },
+    {
+      "name": "WAIT_FOR_BODY_CREATES_UI",
+      "status": "PASS"
+    },
+    {
+      "name": "NO_HOSTNAME_ONLY_UI_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "S1_1_STATIC_CLEAN_GATE_REMOVED",
+      "status": "PASS"
+    },
+    {
+      "name": "LAST_SESSION_DOWNLOAD_CONTROL_PRESENT",
+      "status": "PASS"
+    },
+    {
+      "name": "LAST_SESSION_DOWNLOAD_HANDLER_BOUND",
+      "status": "PASS"
+    },
+    {
+      "name": "S1_2_EVIDENCE_COOKIE_ISOLATED",
+      "status": "PASS"
+    },
+    {
+      "name": "SINGLE_GETSTATS_CALL_PRESERVED",
+      "status": "PASS",
+      "count": 1
+    }
+  ],
+  "liveReadyPrerequisite": true,
+  "queueRequired": false
+}
