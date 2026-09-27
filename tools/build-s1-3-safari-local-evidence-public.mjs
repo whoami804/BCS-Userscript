@@ -11,7 +11,7 @@ const base=fs.readFileSync(basePath,'utf8');
 const baseSha=sha256(base);
 if(baseSha!==expectedBaseSha256)throw new Error(`BASE_SHA_MISMATCH expected=${expectedBaseSha256} actual=${baseSha}`);
 let source=base;const changes=[];
-function replaceExact(label,from,to,countExpected=1){const count=source.split(from).length-1;if(count!==countExpected)throw new Error(`${label}: expected ${countExpected}, found ${count}`);source=source.replace(from,to);changes.push(label);}
+function replaceExact(label,from,to,countExpected=1){const count=source.split(from).length-1;if(count!==countExpected)throw new Error(`${label}: expected ${countExpected}, found ${count}`);source=source.split(from).join(to);changes.push(label);}
 function replaceBetween(label,start,end,replacement){const a=source.indexOf(start);if(a<0)throw new Error(`${label}: start not found`);const b=source.indexOf(end,a+start.length);if(b<0)throw new Error(`${label}: end not found`);source=source.slice(0,a)+replacement+source.slice(b);changes.push(label);}
 
 replaceExact('metadata-version','// @version      0.9.1-s1-2-safari-lifecycle-rc1','// @version      0.9.2-s1-3-safari-local-evidence-rc1');
