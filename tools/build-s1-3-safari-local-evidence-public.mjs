@@ -56,7 +56,7 @@ cleanupLegacyEvidenceCookies();
 
 `;
 replaceBetween('origin-local-evidence-storage','function readDeferredEvidence()','function deferredEvidenceSnapshot',localEvidenceStorage);
-replaceExact('evidence-schema-experiment',"    schemaVersion:2,\n    experiment:'S1_2_SAFARI_LIFECYCLE_SAFE_CLEAN_SURFACE',","    schemaVersion:3,\n    experiment:'S1_3_SAFARI_LOCAL_EVIDENCE_CLEAN_SURFACE',\n    evidenceStorage:'LOCAL_STORAGE_ORIGIN',");
+replaceExact('evidence-schema-experiment',"    schemaVersion:2,experiment:'S1_2_SAFARI_LIFECYCLE_SAFE_CLEAN_SURFACE',version:VERSION,build:BUILD,updatedAt:new Date().toISOString(),reason,","    schemaVersion:3,experiment:'S1_3_SAFARI_LOCAL_EVIDENCE_CLEAN_SURFACE',evidenceStorage:'LOCAL_STORAGE_ORIGIN',version:VERSION,build:BUILD,updatedAt:new Date().toISOString(),reason,");
 replaceExact('download-filename','a.href=url;a.download=`bcs-s1-2-deferred-evidence-${t}.json`;a.style.display=\'none\';','a.href=url;a.download=`bcs-s1-3-local-evidence-${t}.json`;a.style.display=\'none\';');
 replaceExact('ui-status-label',"deferred.activeStreamConfirmed?'RUNTIME CONFIRMADO':'S1.2 CARREGOU · STREAM NÃO CONFIRMADO'","deferred.activeStreamConfirmed?'RUNTIME CONFIRMADO':'S1.3 CARREGOU · STREAM NÃO CONFIRMADO'");
 replaceExact('ui-last-session-label','Última sessão S1.2','Última sessão S1.3');
