@@ -1,0 +1,55 @@
+name: Build public S1.2 Safari lifecycle harness
+
+on:
+  push:
+    branches:
+      - feat/s1-2-safari-lifecycle-harness
+    paths:
+      - tools/build-s1-2-safari-lifecycle-public.mjs
+      - tools/tests/s1-2-lifecycle-harness.mjs
+      - .github/workflows/build-s1-2-safari-lifecycle-public.yml
+      - control-suite-boosteroid-s1-1-safari-deferred-rc1.user.js
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/s1-2-safari-lifecycle-harness
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build public S1.2 fail-closed
+        run: node tools/build-s1-2-safari-lifecycle-public.mjs
+      - name: Run offline lifecycle harness against PUBLIC artifact
+        run: node tools/tests/s1-2-lifecycle-harness.mjs control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js validations/control-suite-v0.9.1-s1-2-safari-lifecycle-public-harness.json
+      - name: Promote public validation only after harness PASS
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const p='validations/control-suite-v0.9.1-s1-2-safari-lifecycle-public-static.json';
+          const h='validations/control-suite-v0.9.1-s1-2-safari-lifecycle-public-harness.json';
+          const v=JSON.parse(fs.readFileSync(p,'utf8'));
+          const hv=JSON.parse(fs.readFileSync(h,'utf8'));
+          if(hv.status!=='OFFLINE_LIFECYCLE_HARNESS_PASS')throw new Error('PUBLIC_HARNESS_NOT_PASS');
+          v.status='STATIC_AND_OFFLINE_HARNESS_PASS__PUBLIC_LIVE_READY';
+          v.lifecycleHarness={status:hv.status,sha256:hv.sha256,checks:hv.checks.length,artifactTested:'PUBLIC_INSTALLABLE'};
+          fs.writeFileSync(p,JSON.stringify(v,null,2)+'\n');
+          NODE
+      - name: Commit public candidate and validations
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js validations/control-suite-v0.9.1-s1-2-safari-lifecycle-public-static.json validations/control-suite-v0.9.1-s1-2-safari-lifecycle-public-harness.json
+          if git diff --cached --quiet; then
+            echo "No generated changes"
+            exit 0
+          fi
+          git commit -m "s1.2 safari: public lifecycle-safe candidate with harness PASS"
+          git push origin HEAD:feat/s1-2-safari-lifecycle-harness
