@@ -6,7 +6,7 @@
 // @author       Whoami
 // @homepageURL  https://github.com/whoami804/BCS-Userscript
 // @updateURL    https://raw.githubusercontent.com/whoami804/BCS-Userscript/feat/s1-2-safari-lifecycle-harness/control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js
-// @downloadURL  https://raw.githubusercontent.com/whoami804/BCS-Userscript/feat/s1-1-safari-deferred-evidence/control-suite-boosteroid-s1-1-safari-deferred-rc1.user.js
+// @downloadURL  https://raw.githubusercontent.com/whoami804/BCS-Userscript/feat/s1-2-safari-lifecycle-harness/control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js
 // @match        https://boosteroid.com/*
 // @match        https://cloud.boosteroid.com/*
 // @match        https://*.boosteroid.com/*

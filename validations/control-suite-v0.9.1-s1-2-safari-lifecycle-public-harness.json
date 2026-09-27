@@ -1,6 +1,6 @@
 {
   "artifact": "control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js",
-  "sha256": "3e1b67c89d27fd1e266198dbceb10984d75074b77627b4ec9184a8f99c6ae8a0",
+  "sha256": "12074924a0a74ea9381d65d89b315ffab91422bb0586f143792b752ae906d9a5",
   "status": "OFFLINE_LIFECYCLE_HARNESS_PASS",
   "scenario": "PRE_STREAM -> ACTIVE -> ACTIVE_REFRESH -> EXIT/PRE_STREAM",
   "checks": [

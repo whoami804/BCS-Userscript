@@ -1,15 +1,15 @@
 {
   "artifact": "control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js",
   "version": "0.9.1-s1-2-safari-lifecycle-rc1",
-  "status": "STATIC_AND_OFFLINE_HARNESS_PASS__PUBLIC_LIVE_READY",
+  "status": "STATIC_METADATA_AND_OFFLINE_HARNESS_PASS__PUBLIC_LIVE_READY",
   "base": {
     "artifact": "control-suite-boosteroid-s1-1-safari-deferred-rc1.user.js",
     "sha256": "1c8b85d5b764d57b7c0f2f8ea06201bd1e73928c2b01324cd4ee81a24467af73",
     "requiredSha256": "1c8b85d5b764d57b7c0f2f8ea06201bd1e73928c2b01324cd4ee81a24467af73"
   },
   "candidate": {
-    "sha256": "3e1b67c89d27fd1e266198dbceb10984d75074b77627b4ec9184a8f99c6ae8a0",
-    "bytes": 133121,
+    "sha256": "12074924a0a74ea9381d65d89b315ffab91422bb0586f143792b752ae906d9a5",
+    "bytes": 133122,
     "lines": 2625
   },
   "nodeCheck": "PASS",
@@ -25,7 +25,8 @@
     "sample-lifecycle-and-evidence",
     "ui-status-label",
     "ui-last-session-label",
-    "dynamic-clean-surface-lifecycle"
+    "dynamic-clean-surface-lifecycle",
+    "metadata-download-url-finalizer"
   ],
   "frozenBlocks": {
     "h014c": {
@@ -46,10 +47,16 @@
     },
     "transportAndPayload": "NOT_EDITED"
   },
+  "metadataGate": {
+    "status": "PASS",
+    "updateURL": "https://raw.githubusercontent.com/whoami804/BCS-Userscript/feat/s1-2-safari-lifecycle-harness/control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js",
+    "downloadURL": "https://raw.githubusercontent.com/whoami804/BCS-Userscript/feat/s1-2-safari-lifecycle-harness/control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js",
+    "staleS11URL": false
+  },
   "lifecycleHarness": {
     "status": "OFFLINE_LIFECYCLE_HARNESS_PASS",
-    "sha256": "3e1b67c89d27fd1e266198dbceb10984d75074b77627b4ec9184a8f99c6ae8a0",
+    "sha256": "12074924a0a74ea9381d65d89b315ffab91422bb0586f143792b752ae906d9a5",
     "checks": 22,
-    "artifactTested": "PUBLIC_INSTALLABLE"
+    "artifactTested": "FINAL_PUBLIC_INSTALLABLE"
   }
 }
