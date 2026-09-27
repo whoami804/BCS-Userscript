@@ -1,0 +1,70 @@
+{
+  "artifact": "control-suite-boosteroid-s1-3-safari-local-evidence-rc1.user.js",
+  "version": "0.9.2-s1-3-safari-local-evidence-rc1",
+  "status": "STATIC_STORAGE_LIFECYCLE_METADATA_PASS__PUBLIC_LIVE_READY",
+  "base": {
+    "artifact": "control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js",
+    "sha256": "12074924a0a74ea9381d65d89b315ffab91422bb0586f143792b752ae906d9a5",
+    "requiredSha256": "12074924a0a74ea9381d65d89b315ffab91422bb0586f143792b752ae906d9a5"
+  },
+  "candidate": {
+    "sha256": "65d4a41d797599e36753f6ba2fc829ac2aef944a3ca1711b015f61db011cd2d1",
+    "bytes": 133338,
+    "lines": 2636
+  },
+  "nodeCheck": "PASS",
+  "exactChanges": [
+    "metadata-version",
+    "metadata-description",
+    "metadata-update-url",
+    "runtime-version",
+    "runtime-build",
+    "evidence-storage-constants",
+    "policy-marker-start",
+    "policy-marker-end",
+    "origin-local-evidence-storage",
+    "evidence-schema-experiment",
+    "download-filename",
+    "ui-status-label",
+    "ui-last-session-label"
+  ],
+  "metadataGate": {
+    "updateURL": "https://raw.githubusercontent.com/whoami804/BCS-Userscript/feat/s1-3-safari-local-evidence/control-suite-boosteroid-s1-3-safari-local-evidence-rc1.user.js",
+    "downloadURL": "https://raw.githubusercontent.com/whoami804/BCS-Userscript/feat/s1-3-safari-local-evidence/control-suite-boosteroid-s1-3-safari-local-evidence-rc1.user.js",
+    "staleS12URL": false
+  },
+  "storagePolicy": {
+    "sessionEvidence": "LOCAL_STORAGE_ORIGIN",
+    "requestCookieEvidence": "FORBIDDEN",
+    "legacyEvidenceCookiesCleaned": [
+      "bcs_s11_ev",
+      "bcs_s12_ev"
+    ],
+    "sharedProfileCookie": "PRESERVED_SMALL_CONFIG_ONLY"
+  },
+  "frozenBlocks": {
+    "h014c": {
+      "status": "BYTE_IDENTICAL_TO_PUBLIC_S1_2",
+      "sha256": "02890dd4db14feebfc415ae9a05e5b88d2747cc89a178b43144ff81d98316224"
+    },
+    "h014d": {
+      "status": "BYTE_IDENTICAL_TO_PUBLIC_S1_2",
+      "sha256": "2abecb3e4eb083631199f3de749f299eb53afdc18a6426f48e7266fa1d5fe942"
+    },
+    "pageBridge": {
+      "status": "BYTE_IDENTICAL_TO_PUBLIC_S1_2",
+      "sha256": "d1b9b0b6b1cd95b526b64a8dcef3b58d243ef0f8d20f494eb3db5d7d36c2792e"
+    },
+    "getStatsCallCount": {
+      "base": 1,
+      "candidate": 1
+    },
+    "transportAndPayload": "NOT_EDITED"
+  },
+  "storageLifecycleMetadataHarness": {
+    "status": "OFFLINE_STORAGE_LIFECYCLE_AND_METADATA_HARNESS_PASS",
+    "sha256": "65d4a41d797599e36753f6ba2fc829ac2aef944a3ca1711b015f61db011cd2d1",
+    "checks": 35,
+    "artifactTested": "FINAL_PUBLIC_INSTALLABLE"
+  }
+}

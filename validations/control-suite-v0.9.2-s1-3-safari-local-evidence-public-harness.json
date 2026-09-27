@@ -1,0 +1,151 @@
+{
+  "artifact": "control-suite-boosteroid-s1-3-safari-local-evidence-rc1.user.js",
+  "sha256": "65d4a41d797599e36753f6ba2fc829ac2aef944a3ca1711b015f61db011cd2d1",
+  "status": "OFFLINE_STORAGE_LIFECYCLE_AND_METADATA_HARNESS_PASS",
+  "scenario": "FINAL PUBLIC: metadata + PRE_STREAM -> ACTIVE -> ACTIVE_REFRESH -> EXIT/PRE_STREAM + localStorage policy",
+  "checks": [
+    {
+      "name": "PUBLIC_VERSION_PRESENT",
+      "status": "PASS"
+    },
+    {
+      "name": "PUBLIC_UPDATE_URL_CORRECT",
+      "status": "PASS"
+    },
+    {
+      "name": "PUBLIC_DOWNLOAD_URL_CORRECT",
+      "status": "PASS"
+    },
+    {
+      "name": "NO_STALE_S1_2_METADATA_URL",
+      "status": "PASS"
+    },
+    {
+      "name": "POLICY_MARKERS_PRESENT",
+      "status": "PASS"
+    },
+    {
+      "name": "PRE_STREAM_CLASSIFIES_INACTIVE",
+      "status": "PASS"
+    },
+    {
+      "name": "ACTIVE_CLASSIFIES_ACTIVE",
+      "status": "PASS"
+    },
+    {
+      "name": "EXIT_CLASSIFIES_INACTIVE",
+      "status": "PASS"
+    },
+    {
+      "name": "BOOT_EVIDENCE_WRITES",
+      "status": "PASS"
+    },
+    {
+      "name": "ACTIVE_EVIDENCE_REPLACES_BOOT",
+      "status": "PASS"
+    },
+    {
+      "name": "ACTIVE_EVIDENCE_CAN_REFRESH",
+      "status": "PASS"
+    },
+    {
+      "name": "PRE_STREAM_CANNOT_OVERWRITE_CONFIRMED",
+      "status": "PASS"
+    },
+    {
+      "name": "CONFIRMED_SNAPSHOT_PRESERVED_AFTER_EXIT",
+      "status": "PASS"
+    },
+    {
+      "name": "PRESERVED_RESOLUTION_2400X1080",
+      "status": "PASS"
+    },
+    {
+      "name": "PRESERVED_ACTIVE_METRICS",
+      "status": "PASS"
+    },
+    {
+      "name": "UI_PRESENT_DURING_PRE_STREAM",
+      "status": "PASS"
+    },
+    {
+      "name": "UI_HIDDEN_ON_CONFIRMED_ACTIVE",
+      "status": "PASS"
+    },
+    {
+      "name": "UI_STAYS_HIDDEN_DURING_ACTIVE_REFRESH",
+      "status": "PASS"
+    },
+    {
+      "name": "UI_RESTORED_AFTER_EXIT",
+      "status": "PASS"
+    },
+    {
+      "name": "WAIT_FOR_BODY_CREATES_UI",
+      "status": "PASS"
+    },
+    {
+      "name": "NO_HOSTNAME_ONLY_UI_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "OLD_STATIC_CLEAN_GATE_REMOVED",
+      "status": "PASS"
+    },
+    {
+      "name": "LAST_SESSION_DOWNLOAD_CONTROL_PRESENT",
+      "status": "PASS"
+    },
+    {
+      "name": "LAST_SESSION_DOWNLOAD_HANDLER_BOUND",
+      "status": "PASS"
+    },
+    {
+      "name": "LOCAL_STORAGE_KEY_PRESENT",
+      "status": "PASS"
+    },
+    {
+      "name": "LOCAL_STORAGE_READ_PRESENT",
+      "status": "PASS"
+    },
+    {
+      "name": "LOCAL_STORAGE_WRITE_PRESENT",
+      "status": "PASS"
+    },
+    {
+      "name": "NO_DEFERRED_EVIDENCE_COOKIE_CONSTANT",
+      "status": "PASS"
+    },
+    {
+      "name": "NO_S1_3_EVIDENCE_COOKIE_NAME",
+      "status": "PASS"
+    },
+    {
+      "name": "LEGACY_EVIDENCE_COOKIE_LIST_PRESENT",
+      "status": "PASS"
+    },
+    {
+      "name": "LEGACY_EVIDENCE_COOKIE_CLEANUP_RUNS",
+      "status": "PASS"
+    },
+    {
+      "name": "EVIDENCE_WRITE_NEVER_USES_COOKIE",
+      "status": "PASS"
+    },
+    {
+      "name": "LEGACY_COOKIE_CLEANUP_EXPIRES_SHARED_DOMAIN",
+      "status": "PASS"
+    },
+    {
+      "name": "SNAPSHOT_DECLARARES_LOCAL_STORAGE",
+      "status": "PASS"
+    },
+    {
+      "name": "SINGLE_GETSTATS_CALL_PRESERVED",
+      "status": "PASS",
+      "count": 1
+    }
+  ],
+  "liveReadyPrerequisite": true,
+  "queueRequired": false
+}
