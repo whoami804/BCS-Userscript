@@ -1,0 +1,55 @@
+name: Build public S1.3 Safari local evidence
+
+on:
+  push:
+    branches:
+      - feat/s1-3-safari-local-evidence
+    paths:
+      - tools/build-s1-3-safari-local-evidence-public.mjs
+      - tools/s1-3-storage-lifecycle-public-harness.mjs
+      - .github/workflows/build-s1-3-safari-local-evidence-public.yml
+      - control-suite-boosteroid-s1-2-safari-lifecycle-rc1.user.js
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/s1-3-safari-local-evidence
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build public S1.3 fail-closed
+        run: node tools/build-s1-3-safari-local-evidence-public.mjs
+      - name: Run storage lifecycle metadata harness against FINAL PUBLIC artifact
+        run: node tools/s1-3-storage-lifecycle-public-harness.mjs control-suite-boosteroid-s1-3-safari-local-evidence-rc1.user.js validations/control-suite-v0.9.2-s1-3-safari-local-evidence-public-harness.json
+      - name: Promote final public validation only after all gates PASS
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const p='validations/control-suite-v0.9.2-s1-3-safari-local-evidence-public-static.json';
+          const h='validations/control-suite-v0.9.2-s1-3-safari-local-evidence-public-harness.json';
+          const v=JSON.parse(fs.readFileSync(p,'utf8'));
+          const hv=JSON.parse(fs.readFileSync(h,'utf8'));
+          if(hv.status!=='OFFLINE_STORAGE_LIFECYCLE_AND_METADATA_HARNESS_PASS')throw new Error('HARNESS_NOT_PASS');
+          v.status='STATIC_STORAGE_LIFECYCLE_METADATA_PASS__PUBLIC_LIVE_READY';
+          v.storageLifecycleMetadataHarness={status:hv.status,sha256:hv.sha256,checks:hv.checks.length,artifactTested:'FINAL_PUBLIC_INSTALLABLE'};
+          fs.writeFileSync(p,JSON.stringify(v,null,2)+'\n');
+          NODE
+      - name: Commit final public candidate and validations
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add control-suite-boosteroid-s1-3-safari-local-evidence-rc1.user.js validations/control-suite-v0.9.2-s1-3-safari-local-evidence-public-static.json validations/control-suite-v0.9.2-s1-3-safari-local-evidence-public-harness.json
+          if git diff --cached --quiet; then
+            echo "No generated changes"
+            exit 0
+          fi
+          git commit -m "s1.3 safari: final public local-evidence candidate all offline gates PASS"
+          git push origin HEAD:feat/s1-3-safari-local-evidence
